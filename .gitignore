@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Web
+web/node_modules/
+web/dist/
+*.local
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+.workbuddy
+
+# Secrets: LLM_API_KEY etc. never enter version control (config.yml reads ${LLM_API_KEY})
+.env
+
+# 运行时产物
+run/
+logs/

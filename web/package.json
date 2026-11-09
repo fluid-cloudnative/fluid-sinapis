@@ -1,0 +1,22 @@
+{
+  "name": "fluid-sinapis-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fluid-Sinapis-Agent web console: Kubernetes cluster and Fluid cache metrics",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.0",
+    "vite": "^7.1.0"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

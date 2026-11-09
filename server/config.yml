@@ -1,0 +1,184 @@
+# Fluid-Sinapis-Agent configuration
+#
+# Three processes read this file independently; each only looks at its own
+# sections and they do not cross-validate each other:
+#   server/config.py            -> target / k8s / prometheus / collectors (collector + web console)
+#   server/agent/config.py      -> target / agent / model / models / skills / prometheus / execution / policies (agent)
+#   user_system_controller.py   -> user_system (external push; the only section that reloads live)
+#
+# Convention: a value with one meaning is written here exactly once, so that
+# changing it in one place cannot silently leave the other readers stale.
+#   target      single source of truth for cluster / namespace / dataset / Runtime, shared by all three
+#   prometheus  single source of truth for metric endpoints: pushgateway_url writes, query_url reads
+#
+# Precedence: environment variables > this file > code defaults. Except for the
+# user_system section, changes require a process restart.
+
+# -- Target cluster and Fluid resources (single source of truth) --------------
+target:
+  kube_context: kubernetes-admin@cluster   # see: kubectl config get-contexts
+  namespace: jgd-fluid
+  dataset: nju-model-hdfs
+  # An empty runtime_name falls back to dataset; set it only when the two differ.
+  runtime_name: nju-model-hdfs
+  runtime_plural: alluxioruntimes          # CRD plural name, i.e. kubectl get <runtime_plural>
+
+# -- Collection semantics (collector-only) -----------------------------------
+k8s:
+  node_role: worker                        # recorded as a label on k8s metrics only; nodes are not filtered by role
+  free_mode: request                       # request = allocatable - target-namespace pod requests; usage = real usage (needs metrics-server)
+  request_timeout_seconds: 10              # timeout for Kubernetes API calls
+
+# -- Prometheus read/write channels (single source of truth) -----------------
+prometheus:
+  pushgateway_url: http://localhost:9091   # write: collectors push their results here
+  query_url: http://localhost:9090         # read: agent-side PromQL queries
+  request_timeout_seconds: 10
+
+# -- Collection schedule (run_collectors.py) ---------------------------------
+collectors:
+  interval_seconds: 10
+
+# -- Agent loop --------------------------------------------------------------
+agent:
+  interval_seconds: 10
+  # Enable the second, independent review model call: true = one reasoning call
+  # plus one review call; false = reasoning only, and its result is executed
+  # directly (the review model is never invoked).
+  validation_enabled: false
+
+# -- Execution-stage limits --------------------------------------------------
+execution:
+  # Only file paths under these prefixes may be operated on (checked by preload / evict).
+  # Must cover the real UFS path of target.dataset; an empty [] disables the check (not advised).
+  allowed_path_prefixes:
+  - /models
+  # Timeout for a single script, in seconds; a timeout is treated as an unknown result
+  # and is never retried. Must stay above wait_timeout_seconds so a script that polls for
+  # completion is not killed while polling (that would turn a slow operation into
+  # "unknown" instead of "completed").
+  timeout_seconds: 660
+  # Whether scripts wait for asynchronous operations (replica changes until Ready,
+  # DataLoad until Complete). Enabled so a round only ends once the operation is really
+  # done; with it off, "Fluid skills finished" would only mean "the request was accepted".
+  wait: true
+  # How long a single script may poll for completion; the script timeout above covers it.
+  wait_timeout_seconds: 600
+  # Dry-run switch: print what would be submitted without touching the cluster. Turn it on for the first round.
+  dry_run: false
+
+# Shared model defaults; any field an individual agent does not override is inherited from here.
+# api_key comes from the environment only and never enters version control: export LLM_API_KEY=<your key>
+model:
+  # A GLM request with a large context (skills plus all observations before emitting a Decision)
+  # measured over 180s, so the timeout is relaxed to 300.
+  timeout_seconds: 300
+  api_key: ${LLM_API_KEY}
+  base_url: https://open.bigmodel.cn/api/paas/v4
+  name: glm-5.3-flash
+  provider: openai_compatible
+  temperature: 0
+  extra_body:
+    thinking:
+      type: disabled
+
+# Per-agent overrides (url / api_key / model name / timeout, any field can differ):
+#   planner   = first reasoning pass (reads strategies + metrics, emits a Decision)
+#   validator = second, independent review (only called when agent.validation_enabled=true)
+# There is no executor model: execution is deterministic code, so only these two
+# roles are accepted. Fields not overridden here are inherited from the shared model above.
+# Example - point the validator at another provider:
+#   validator:
+#     name: glm-4-flash
+#     base_url: https://other.example/v4
+#     api_key: ${OTHER_API_KEY}
+models:
+  planner:
+    name: glm-5.3-flash
+  validator:
+    name: glm-5.3-flash
+
+skills:
+  # Strategy skills used for planning and review (SKILL.md only).
+  official_dir: agent/skills/official
+  # Review-agent-only skill directory (not mounted for the planner, to prevent cross-role reading).
+  review_dir: agent/skills/review_skills
+  # User-defined strategy directory (SKILL.md + scripts/decide.py; loaded every round, takes
+  # precedence over built-in strategies when they conflict).
+  user_dir: agent/skills/user_skills
+  # Operation skills used for execution (SKILL.md + scripts/*.py).
+  fluid_dir: agent/skills/fluid_skills
+
+policies:
+  expand:
+    replica_increment: 1
+    # Hard ceiling on the replica count: expansion clamps to it and stops entirely once
+    # it is reached. Keep it equal to policies.evict.max_workers — eviction is only the
+    # applicable lever once expansion can no longer grow.
+    max_workers: 2
+  preload:
+    max_files: 3
+    min_file_size_bytes: 1024
+  # Eviction applies only once replicas cannot grow further: the worker count has
+  # reached max_workers and usage is above usage_ratio_above. Free down to
+  # usage_ratio_down_to; the gap between the two ratios is the hysteresis band that
+  # keeps a single crossing from triggering eviction round after round.
+  # Keep max_workers equal to policies.expand.max_workers.
+  evict:
+    max_workers: 2
+    usage_ratio_above: 0.70
+    usage_ratio_down_to: 0.50
+  # Shrinking is judged on needed_workers = used_bytes / capacity_per_worker: the data
+  # must fit in (desired - 1) replicas at or below post_shrink_ratio. 0.50 leaves the
+  # cache half empty right after the shrink; 0.30 keeps the trigger at 30% of total
+  # capacity with two replicas but leaves far less headroom.
+  shrink:
+    min_workers: 1
+    post_shrink_ratio: 0.50
+
+# ==============================================================================
+# user_system: external data ingestion from the user's system (passive push)
+#   Changes to this section take effect on the next request, without a restart
+#   (detected by file mtime, effective within about one second).
+#
+# -- Option 1: metrics (push pre-computed values) ------------------------------
+#   The user's system POSTs values it already computed to /api/user-system/metrics;
+#   whatever is pushed is stored as-is. Each entry supports:
+#     name    metric name (must follow Prometheus naming rules)
+#     help    metric description
+#     type    gauge or counter, defaults to gauge
+#     labels  label keys that every push must carry (optional)
+#
+# -- Option 2: events (push events; the server derives the statistics) --------
+#   The user's system POSTs one entry to /api/user-system/events per occurrence,
+#   carrying only event dimensions and numeric fields; it does not need to compute
+#   rates or other statistics itself. Each entry supports:
+#     name     event name (identifies the event type to the server)
+#     help     event description
+#     labels   dimensions the event must carry, e.g. [file]
+#     counter  name of the counter metric the server accumulates automatically.
+#              Rates are computed in Prometheus with rate(counter[5m]); a counter
+#              resetting to zero on process restart is fine because rate() handles it.
+#     gauges   mapping of event numeric fields to stored gauges: field is the field
+#              name in the event, metric/help describe the stored gauge (last value kept).
+
+user_system:
+  events:
+    # Model file access event: the user's system pushes one entry per file access
+    # (file name + access time + file size); rates are computed by the server/Prometheus.
+    - name: model_file_access
+      help: Model file access events
+      labels: [file]
+      counter: model_file_access_count
+      gauges:
+        - field: access_time
+          metric: model_file_last_access_time
+          help: Model file last access time (Unix ms)
+        - field: size_bytes
+          metric: model_file_size_bytes
+          help: Model file size (bytes)
+
+  metrics:
+    # Instantaneous metrics the user's system has already computed can be pushed directly.
+    - name: model_download_bandwidth
+      help: Model download bandwidth (bytes/s)
