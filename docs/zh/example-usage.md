@@ -78,6 +78,7 @@
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `--url` | `http://127.0.0.1:8000` | Web 控制台地址 |
+| `--api-key` | 环境变量 `SINAPIS_API_KEY` | 后端所有接口要求的 API Key |
 | `--source` | `hdfs-simulator` | 推送方标识（作为推送指标标签；对事件仅作记录） |
 | `--scenario` | 无（必填） | `preload` 或 `expand` |
 
@@ -87,7 +88,8 @@
 ## 5. 运行步骤
 
 ```bash
-# 1. 启动 Web 控制台（如果还没起）
+# 1. 启动 Web 控制台（如果还没起）；启动需要 API Key：
+export SINAPIS_API_KEY=$(openssl rand -hex 32)   # 生成一次，在部署环境中持久化
 .venv/bin/python -m server.controller.web_controller
 
 # 2. 加热 108/109，等 Agent 完成预加载
@@ -96,6 +98,9 @@
 # 3. 确认 108/109 已缓存后，再加热 104/105
 .venv/bin/python examples/user_system_simulator.py --scenario expand
 ```
+
+模拟器从环境变量 `SINAPIS_API_KEY`（或 `--api-key`）读取 Key，每个请求都带
+`Authorization: Bearer <key>` 头；没有 Key 会直接退出并提示。
 
 正常输出示例（程序输出为英文）：
 
@@ -134,8 +139,10 @@ scenario=preload: 2 files x 50 accesses = 100 events, 3.41GiB (one push)
 ## 7. 常见问题
 
 **Q1：模拟器启动就报 HTTPError 4xx？**
-先查 `GET /api/user-system/metrics/schema`：事件/指标不在配置清单（`unknown_event` /
-`unknown_metric`）或 `user_system` 段配置加载失败（503）。改好 config.yml 等 1 秒热加载后重试。
+401 说明 API Key 缺失或不对（两侧的 `SINAPIS_API_KEY` 必须一致）。否则查
+`GET /api/user-system/metrics/schema`（带同样的请求头）：事件/指标不在配置清单
+（`unknown_event` / `unknown_metric`）或 `user_system` 段配置加载失败（503）。改好
+config.yml 等 1 秒热加载后重试。
 
 **Q2：推送成功但 Agent 没反应？**
 Agent 决策有周期（默认 10 秒，`server/config.yml` 里的 `agent.interval_seconds`）且需要

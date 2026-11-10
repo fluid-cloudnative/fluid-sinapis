@@ -272,6 +272,7 @@ def test_settings_read_cached_files_options_from_environment():
         "WEB_CACHED_FILES_SCAN_PATH": "/data",
         "WEB_CACHED_FILES_TTL_SECONDS": "5",
         "KUBECTL": "/usr/local/bin/kubectl",
+        "SINAPIS_API_KEY": "k",
     })
     assert settings.cached_files_scan_path == "/data"
     assert settings.cached_files_ttl_seconds == 5.0

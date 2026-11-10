@@ -262,7 +262,8 @@ Conventions and rules:
 | `PUSHGATEWAY_URL` / `PROMETHEUS_URL` / `PROMETHEUS_TIMEOUT_SECONDS` | `prometheus.*` | :9091 / :9090 / 10 |
 | `COLLECTOR_INTERVAL_SECONDS` | `collectors.interval_seconds` | 10 |
 | `LLM_API_KEY` etc. | `${...}` placeholders in `model.api_key` | unset → startup error |
-| `WEB_HOST` / `WEB_PORT` | web listen address | 127.0.0.1 / 8000 everywhere (code and `bin/start.sh`); set `WEB_HOST=0.0.0.0` only for deliberate LAN exposure — the API has no authentication, see the security note in section 7 |
+| `WEB_HOST` / `WEB_PORT` | web listen address | 127.0.0.1 / 8000 everywhere (code and `bin/start.sh`); set `WEB_HOST=0.0.0.0` only for deliberate LAN exposure — pair it with a TLS-terminating reverse proxy, see the security note in section 7 |
+| `SINAPIS_API_KEY` / `SINAPIS_AUTH_DISABLED` | API key for every HTTP endpoint (`Authorization: Bearer`) / explicit keyless escape hatch | unset → backend refuses to start; see [API Key Authentication](#api-key-authentication) |
 | `WEB_CACHE_TTL_SECONDS` / `WEB_CORS_ORIGINS` | web cache & CORS | 5 / localhost |
 | `WEB_CACHED_FILES_SCAN_PATH` / `WEB_CACHED_FILES_TTL_SECONDS` | Alluxio scan path / result cache time for the cached-files table | /models / 30 s |
 | `SINAPIS_USER_METRICS_CONFIG` | separate config file for the user-system metric/event definitions (web console) | defaults to the `SINAPIS_CONFIG` file |
@@ -272,12 +273,34 @@ Conventions and rules:
 
 ## 7. Starting the System
 
-> **⚠ Security note — the HTTP API has no authentication.** The backend serves the
-> read-only metric APIs *and* writable push endpoints (`POST /api/user-system/metrics`
-> and `POST /api/user-system/events`). Keep `WEB_HOST` on `127.0.0.1` (the default of
-> both the code and the start scripts), never expose the port directly to a public
-> network, and if LAN access is required put an authenticating reverse proxy or an
-> API gateway in front first.
+> **⚠ Security note — every HTTP endpoint requires an API key.** The backend serves
+> the read-only metric APIs *and* writable push endpoints (`POST /api/user-system/metrics`
+> and `POST /api/user-system/events`), and all of them are gated behind
+> `Authorization: Bearer $SINAPIS_API_KEY`. Generate the key once, keep it out of git,
+> and remember it travels in the clear over plain HTTP: keep `WEB_HOST` on
+> `127.0.0.1` (the default of both the code and the start scripts), never expose the
+> port directly to a public network, and if LAN access is required put a
+> TLS-terminating reverse proxy in front first.
+
+### API Key Authentication
+
+Every HTTP endpoint of the backend (GET and POST alike, including `/api/docs` and
+`/api/openapi.json`) requires `Authorization: Bearer <key>`.
+
+- **Generate once**: `openssl rand -hex 32`. The key is a long-lived shared secret —
+  external user systems push against it for years; rotation is only needed if it leaks
+  (support two keys during a transition to rotate without downtime).
+- **Persist in the deployment environment**: shell profile, systemd
+  `EnvironmentFile=`, docker `env_file`/secrets. It must be **identical across
+  restarts** — the backend never generates or rotates it on its own, and never reads
+  it from any file tracked by git (`.gitignore` also covers `.env`).
+- **Fail closed**: without `SINAPIS_API_KEY` the backend refuses to start with an
+  explicit error (and `bin/start.sh backend` explains it before even launching).
+  A deliberately keyless local run is possible only by setting
+  `SINAPIS_AUTH_DISABLED=true`, which is mutually exclusive with the key.
+- **Who needs it**: external pushers (curl / the user-system simulator / your systems)
+  send the `Authorization: Bearer` header; the web console asks for the key once in
+  the browser and keeps it in `localStorage`.
 
 ### Option 1: one-shot scripts (recommended)
 

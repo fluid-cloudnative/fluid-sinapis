@@ -45,11 +45,18 @@ target:
   runtime_name: nju-model-hdfs             # empty = follow dataset
 ```
 
-Export the model key:
+Export the model key and the API key:
 
 ```bash
 export LLM_API_KEY=<your key>
+export SINAPIS_API_KEY=$(openssl rand -hex 32)   # generate ONCE, then persist (see below)
 ```
+
+> The API key protects every HTTP endpoint (`Authorization: Bearer`). Generate it
+> once and persist it in your deployment environment (shell profile, systemd
+> `EnvironmentFile`, …) — it must stay the same across restarts and must never be
+> committed to git. Pushers and the web console send the same key; details in the
+> [user guide](user-guide.md#api-key-authentication).
 
 ## 3. Start
 
@@ -61,10 +68,13 @@ bin/start.sh          # start all: collector → backend → frontend → agent
 ```
 
 - PIDs go to `run/`, logs to `logs/`; `bin/stop.sh` stops, `bin/restart.sh` restarts;
+- The backend refuses to start without `SINAPIS_API_KEY` and every endpoint requires
+  `Authorization: Bearer <key>` (clearly opt out with `SINAPIS_AUTH_DISABLED=true`
+  for a keyless local run only);
 - The backend listens on `127.0.0.1:8000` and its API data **always comes from real
-  cluster collection**. `127.0.0.1` is deliberate: the HTTP API has **no
-  authentication**, so do not expose it to a LAN/public network without an
-  authenticating reverse proxy (`WEB_HOST=0.0.0.0` opens it to all interfaces);
+  cluster collection**. Keep `127.0.0.1` unless you deliberately expose it: the key
+  travels over plain HTTP, so LAN/public exposure needs a TLS-terminating reverse
+  proxy (`WEB_HOST=0.0.0.0` opens it to all interfaces);
 - The agent fails fast at startup when the `${...}` placeholder in `config.yml`
   (e.g. `LLM_API_KEY`) references an unset environment variable, and says so explicitly;
 - For a first run, validate a single round before enabling the loop:

@@ -83,6 +83,7 @@ before starting.
 | Option | Default | Description |
 |---|---|---|
 | `--url` | `http://127.0.0.1:8000` | Web console address |
+| `--api-key` | env `SINAPIS_API_KEY` | API key the backend requires on every endpoint |
 | `--source` | `hdfs-simulator` | Pusher identity (labels pushed metrics; informational for events) |
 | `--scenario` | — (required) | `preload` or `expand` |
 
@@ -93,7 +94,8 @@ are independent, so the expand pair arrives hotter than the preload pair.
 ## 5. Running
 
 ```bash
-# 1. Start the web console (if it is not already running)
+# 1. Start the web console (if it is not already running); it requires the API key:
+export SINAPIS_API_KEY=$(openssl rand -hex 32)   # generate once, persist in your env
 .venv/bin/python -m server.controller.web_controller
 
 # 2. Heat 108/109 and let the agent preload them
@@ -102,6 +104,9 @@ are independent, so the expand pair arrives hotter than the preload pair.
 # 3. Once 108/109 are cached, heat 104/105 on top of them
 .venv/bin/python examples/user_system_simulator.py --scenario expand
 ```
+
+The simulator reads `SINAPIS_API_KEY` from the environment (or `--api-key`) and sends
+`Authorization: Bearer <key>` on every request; without a key it exits with a hint.
 
 Example output (the script prints English):
 
@@ -141,9 +146,11 @@ With the pushes done:
 ## 7. FAQ
 
 **Q1: The simulator immediately fails with HTTPError 4xx?**
-Check `GET /api/user-system/metrics/schema`: the event/metric is not in the configured list
-(`unknown_event` / `unknown_metric`) or the `user_system` config failed to load (503). Fix
-config.yml, wait ~1 s for the hot reload, and retry.
+A 401 means the API key is missing or wrong (`SINAPIS_API_KEY` on both sides must
+match). Otherwise check `GET /api/user-system/metrics/schema` (with the same header):
+the event/metric is not in the configured list (`unknown_event` / `unknown_metric`) or
+the `user_system` config failed to load (503). Fix config.yml, wait ~1 s for the hot
+reload, and retry.
 
 **Q2: Pushes succeed but the agent does nothing?**
 The agent decides on a period (default 10 s, `agent.interval_seconds` in

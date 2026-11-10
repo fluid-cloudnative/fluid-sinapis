@@ -58,6 +58,8 @@ cd web && npm ci && npm run build
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `WEB_HOST` / `WEB_PORT` | `127.0.0.1` / `8000` | 服务监听地址（仅环境变量） |
+| `SINAPIS_API_KEY` | 无（未设置拒绝启动） | 所有接口要求的 API Key（`Authorization: Bearer`），生成一次长期使用，部署环境中持久化、不进 git |
+| `SINAPIS_AUTH_DISABLED` | 无 | 显式无 Key 逃生开关（仅本机调试），与 `SINAPIS_API_KEY` 互斥 |
 | `KUBE_CONTEXT` | `kubernetes-admin@cluster` | kubeconfig context |
 | `KUBE_NS` | `jgd-fluid` | 目标 namespace |
 | `FLUID_DATASET` / `FLUID_RUNTIME` | `nju-model-hdfs` | 数据集与 Runtime 名 |
@@ -67,9 +69,10 @@ cd web && npm ci && npm run build
 
 ## 接口
 
-> **⚠ 安全提示**：以下接口均**无鉴权**。请保持 `WEB_HOST=127.0.0.1`（代码与
+> **⚠ 安全提示**：以下接口均要求 `Authorization: Bearer $SINAPIS_API_KEY`（未带或错误
+> 返回 401）。Key 在纯 HTTP 下明文传输，请保持 `WEB_HOST=127.0.0.1`（代码与
 > `bin/start.sh` 的默认值），不要把端口直接暴露到公网；确需局域网访问时，先在前面加
-> 一层带鉴权的反向代理或 API 网关（详见 `docs/*/user-guide.md` 第 7 节）。
+> 一层 TLS 反向代理（详见 `docs/*/user-guide.md` 第 7 节「API Key 鉴权」）。
 
 - `GET /api/overview` — K8s + Fluid 两个区块一次返回
 - `GET /api/k8s`、`GET /api/fluid` — 单个数据源

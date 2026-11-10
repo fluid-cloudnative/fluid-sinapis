@@ -7,10 +7,11 @@ RUN_DIR="$REPO_ROOT/run"
 LOG_DIR="$REPO_ROOT/logs"
 WEB_PORT="${WEB_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
-# Listen on localhost by default: the HTTP API (including the user-system push
-# endpoints) has no authentication of its own, so LAN/public exposure must be a
-# deliberate decision — set WEB_HOST=0.0.0.0 and front it with an authenticating
-# reverse proxy when external access is really needed.
+# Listen on localhost by default: the HTTP API is protected by a shared API key
+# (SINAPIS_API_KEY, checked by the backend itself), but the key is sent in the
+# clear over plain HTTP, so LAN/public exposure must still be a deliberate
+# decision — set WEB_HOST=0.0.0.0 and front it with a TLS-terminating,
+# authenticating reverse proxy when external access is really needed.
 WEB_HOST="${WEB_HOST:-127.0.0.1}"
 export WEB_PORT FRONTEND_PORT WEB_HOST
 
@@ -66,6 +67,14 @@ start_service() {
         collector|backend|agent)
             if [ ! -x "$PYTHONBIN" ]; then
                 echo "✗ $name was not started: $PYTHONBIN not found (install the dependencies first, see docs/en/user-guide.md)" >&2
+                return 1
+            fi
+            ;;
+        backend)
+            # The backend refuses to start without a key anyway; fail here with the
+            # actionable hint up front so the cause is visible before the log tail.
+            if [ -z "${SINAPIS_API_KEY:-}" ] && [ -z "${SINAPIS_AUTH_DISABLED:-}" ]; then
+                echo "✗ backend was not started: export SINAPIS_API_KEY=<key from \`openssl rand -hex 32\`> first (persisted in your environment, not in git; see docs/en/user-guide.md section on the API key)" >&2
                 return 1
             fi
             ;;

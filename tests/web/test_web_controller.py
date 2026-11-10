@@ -153,8 +153,11 @@ def test_unknown_api_route_is_404_json():
     ],
 )
 def test_settings_read_from_environment(env, expected_port):
-    settings = WebSettings.from_env(env)
+    # from_env() fails closed without an API key, so every env fixture here
+    # carries one (or the explicit disable escape hatch).
+    settings = WebSettings.from_env({**env, "SINAPIS_API_KEY": "k"})
     assert settings.port == expected_port
+    assert settings.api_key == "k"
 
 
 def test_healthz_reports_ok():

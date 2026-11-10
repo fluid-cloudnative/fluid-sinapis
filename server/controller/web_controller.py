@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -26,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -219,6 +220,11 @@ class WebSettings:
     # User-system external metrics: the push/storage channel and the metric definition file.
     user_pushgateway_url: str = "http://localhost:9091"
     user_metrics_config: str = ""
+    # API key required on every endpoint ("Authorization: Bearer <key>"). Empty only
+    # ever happens for programmatically built settings (tests); the real entry point
+    # from_env() refuses to produce settings without a key unless auth is explicitly
+    # disabled, so no production path can end up serving an unauthenticated API.
+    api_key: str = ""
 
     def target(self) -> Target:
         return Target(
@@ -240,6 +246,26 @@ class WebSettings:
         # settings came from (SINAPIS_CONFIG-aware), so retargeting the config file
         # cannot leave user_system silently reading server/config.yml.
         config_path = e.get("SINAPIS_CONFIG", "").strip() or str(DEFAULT_CONFIG_PATH)
+        # Fail closed: without a key the API would be unauthenticated. The key comes
+        # from the deployment environment, so it stays stable across restarts; the
+        # only way to run without one is the explicit escape hatch.
+        api_key = e.get("SINAPIS_API_KEY", "").strip()
+        auth_disabled = e.get("SINAPIS_AUTH_DISABLED", "").strip().lower() in (
+            "1", "true", "yes",
+        )
+        if api_key and auth_disabled:
+            raise ValueError(
+                "SINAPIS_API_KEY and SINAPIS_AUTH_DISABLED are mutually exclusive: "
+                "either set a key or disable authentication, not both"
+            )
+        if not api_key and not auth_disabled:
+            raise ValueError(
+                "SINAPIS_API_KEY is not set: refusing to expose an unauthenticated API. "
+                "Generate a key once with `openssl rand -hex 32`, persist it in the "
+                "deployment environment (it must survive restarts), and never commit "
+                "it to version control. For a deliberately keyless local run set "
+                "SINAPIS_AUTH_DISABLED=true."
+            )
         return cls(
             host=e.get("WEB_HOST", cls.host),
             port=int(e.get("WEB_PORT", cls.port)),
@@ -263,6 +289,7 @@ class WebSettings:
                 "WEB_CACHED_FILES_SCAN_PATH", cls.cached_files_scan_path),
             cached_files_ttl_seconds=float(e.get("WEB_CACHED_FILES_TTL_SECONDS", 30)),
             cached_files_kubectl=e.get("KUBECTL", cls.cached_files_kubectl),
+            api_key=api_key,
         )
 
 
@@ -370,6 +397,31 @@ def _friendly_error(exc: Exception) -> str:
 # ==============================================================
 # FastAPI application
 # ==============================================================
+def _api_key_auth(api_key: str) -> Callable[[str | None], None]:
+    """Require ``Authorization: Bearer <api_key>`` on every request.
+
+    The comparison is constant-time so response latency cannot leak key bytes.
+    Rejections are deliberately uniform (401, same message) whether the header is
+    missing, malformed, or wrong, so a caller cannot probe which of the three it hit.
+    """
+    expected = api_key
+
+    def check(authorization: str | None = Header(default=None)) -> None:
+        scheme, _, credential = (authorization or "").partition(" ")
+        if (
+            scheme.strip().lower() != "bearer"
+            or not credential
+            or not secrets.compare_digest(credential.strip(), expected)
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="missing or invalid API key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    return check
+
+
 def create_app(
     settings: WebSettings | None = None,
     *,
@@ -392,8 +444,16 @@ def create_app(
     app = FastAPI(
         title="Fluid-Sinapis-Agent Web API",
         version="0.1.0",
-        docs_url="/api/docs",
-        openapi_url="/api/openapi.json",
+        # Custom (gated) docs below instead of docs_url/openapi_url: FastAPI's
+        # built-in docs routes live at the Starlette layer, where global
+        # dependencies do NOT apply — they would bypass the API key.
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        # Global auth: every route (GET and POST alike) requires the key.
+        # Programmatic callers (tests) may build settings without a key; the real
+        # entry point WebSettings.from_env() never produces one.
+        dependencies=[Depends(_api_key_auth(settings.api_key))] if settings.api_key else [],
     )
     app.state.settings = settings
     app.state.service = service
@@ -406,12 +466,26 @@ def create_app(
             # POST too: browser-based pushers need a passing preflight for the
             # user-system POST endpoints (OPTIONS itself is handled by the middleware).
             allow_methods=["GET", "POST"],
-            allow_headers=["*"],
+            # "*" does NOT cover Authorization per the fetch spec, so it must be
+            # listed explicitly for browser clients.
+            allow_headers=["*", "Authorization"],
         )
 
     @app.get("/api/healthz", tags=["system"])
     def healthz() -> dict[str, Any]:
         return {"status": "ok"}
+
+    @app.get("/api/openapi.json", include_in_schema=False)
+    def openapi_schema() -> JSONResponse:
+        return JSONResponse(app.openapi())
+
+    @app.get("/api/docs", include_in_schema=False)
+    def swagger_ui() -> Any:
+        from fastapi.openapi.docs import get_swagger_ui_html
+
+        return get_swagger_ui_html(
+            openapi_url="/api/openapi.json", title=app.title
+        )
 
     @app.get("/api/overview", response_model=Overview, tags=["metrics"])
     def overview() -> Overview:
@@ -494,6 +568,15 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 else:
-    # Import-time app for `uvicorn server.controller.web_controller:app`; running as a
-    # module (`python -m ...`) builds the app once inside main() instead of twice.
-    app = create_app()
+    def __getattr__(name: str) -> Any:
+        # Lazy import-time app for `uvicorn server.controller.web_controller:app`:
+        # settings must NOT be resolved at import time, because from_env() fails
+        # closed without SINAPIS_API_KEY and a hard import would crash unrelated
+        # importers (tests, tooling) before they can even run. uvicorn resolves the
+        # "app" attribute after import, so PEP 562 defers the build to that point
+        # (and once set, the module attribute short-circuits this hook).
+        if name == "app":
+            global app
+            app = create_app()
+            return app
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
