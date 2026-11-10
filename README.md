@@ -24,7 +24,7 @@ Fluid already has complete elastic capabilities, but the "switches" of these cap
 
   Pluggable collector classes pull Fluid native metrics and the K8s Metrics API (pod/node resources), unified as Prometheus metrics for storage; a new collector is a class registered in `server/collectors/run_collectors.py`. External business traffic data needs no core change: it is declared in the `user_system` section of `config.yml` and pushed over HTTP
 
-- __External user-system data ingestion (passive push)__
+- __LLM agent system data ingestion (passive push)__
 
   Data that cannot be pulled actively is POSTed by the user system, validated server-side, and written into Prometheus. **The `user_system` section of `server/config.yml` hot-reloads without a restart** (detected by file mtime, effective within about 1 second); every other section requires a restart. detail: [custom-strategies-and-metrics](docs/en/custom-strategies-and-metrics.md):
 

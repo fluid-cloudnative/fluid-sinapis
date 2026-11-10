@@ -11,6 +11,7 @@ The executor is deterministic code: each approved step maps to its catalogue too
 
 import json
 import logging
+import re
 import subprocess
 import sys
 import time
@@ -71,25 +72,80 @@ def _collect_observations(tools: Sequence[Any]) -> list[dict[str, Any]]:
     return observations
 
 
-def _structured(model: BaseChatModel, schema, messages: list, stage: str):
+_TOOL_CALL_REMINDER = (
+    "Your previous reply was plain text. Call the required tool again and return "
+    "the complete structured arguments as its parameters; do not answer in prose."
+)
+_JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+def _message_text(message: Any) -> str:
+    """Flatten message content into plain text (a string or a list of parts)."""
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    return "".join(
+        part.get("text", "") if isinstance(part, dict) else str(part) for part in content
+    )
+
+
+def _json_object_in_text(text: str) -> str | None:
+    """Extract the outermost JSON object from a prose answer, if it contains one."""
+    if not text:
+        return None
+    fenced = _JSON_FENCE.search(text)
+    candidate = fenced.group(1) if fenced else text
+    start, end = candidate.find("{"), candidate.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    return candidate[start : end + 1]
+
+
+def _structured(model: BaseChatModel, schema, messages: list, stage: str, *, attempts: int = 2):
     """Bind the schema as the only tool, then parse its tool call into the schema.
 
-    None means the model returned no structured call for this schema; the caller
-    raises for the stage.
+    Even at temperature 0 the model occasionally answers in prose instead of
+    emitting the tool call (llm.log: every failed planner round has non-empty
+    content, every successful one is a bare tool call). Before giving up:
+    - read a JSON object out of the prose and validate it against the schema;
+    - retry once with an explicit tool-call reminder appended to the thread.
+    None means every attempt failed; the prose is logged so the failure is
+    attributable from the stage log alone.
     """
-    message = model.bind_tools([schema]).invoke(messages)
-    calls = getattr(message, "tool_calls", None) or []
-    call = next((c for c in calls if c.get("name") == schema.__name__), None)
-    if call is None:
-        return None
-    try:
-        return schema.model_validate(call["args"])
-    except Exception as exc:
-        raise StructuredOutputValidationError(
-            f"{stage} returned an invalid {schema.__name__}: {exc}",
-            source=schema.__name__,
-            ai_message=message,
-        ) from exc
+    base = list(messages)
+    for attempt in range(1, attempts + 1):
+        message = model.bind_tools([schema]).invoke(
+            base if attempt == 1 else [*base, HumanMessage(content=_TOOL_CALL_REMINDER)]
+        )
+        calls = getattr(message, "tool_calls", None) or []
+        call = next((c for c in calls if c.get("name") == schema.__name__), None)
+        if call is not None:
+            try:
+                return schema.model_validate(call["args"])
+            except Exception as exc:
+                raise StructuredOutputValidationError(
+                    f"{stage} returned an invalid {schema.__name__}: {exc}",
+                    source=schema.__name__,
+                    ai_message=message,
+                ) from exc
+        prose = _message_text(message).strip()
+        raw = _json_object_in_text(prose)
+        if raw:
+            try:
+                parsed = schema.model_validate_json(raw)
+                logger.warning(
+                    "[%s] attempt %d/%d: no %s tool call, recovered the structured "
+                    "output from the message text",
+                    stage, attempt, attempts, schema.__name__,
+                )
+                return parsed
+            except Exception:
+                pass
+        logger.warning(
+            "[%s] attempt %d/%d: no %s tool call, prose answer (%d chars): %.400s",
+            stage, attempt, attempts, schema.__name__, len(prose), prose,
+        )
+    return None
 
 
 def _compact_observation(entry: dict[str, Any]) -> dict[str, Any]:

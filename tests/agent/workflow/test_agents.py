@@ -251,14 +251,55 @@ def test_invalid_review_is_not_repaired_or_accepted(model_factory, decision, rev
 @pytest.mark.parametrize("stage", ["planner", "validator"])
 def test_plain_text_result_reports_the_stage_and_is_not_accepted(model_factory, decision, stage):
     # Some compatible APIs return plain text despite the required tool choice.
+    # Prose without any JSON object cannot be salvaged; after the single retry
+    # the round is rejected.
     plain_text = AIMessage(content="The plan looks reasonable.")
-    responses = [plain_text] if stage == "planner" else [("Decision", decision), plain_text]
+    responses = (
+        [plain_text, plain_text]
+        if stage == "planner"
+        else [("Decision", decision), plain_text, plain_text]
+    )
     model = model_factory(*responses)
 
     with pytest.raises(ValueError, match=f"{stage} did not return a structured"):
         AgentWorkflow(model).run("Prepare the dataset")
 
     assert len(model.requests) == len(responses)
+
+
+def test_prose_with_a_json_decision_is_recovered_without_retry(model_factory, decision):
+    # The observed failure mode: the model wraps its decision in prose (with or
+    # without a fence) instead of emitting the tool call. The JSON object is
+    # validated against the schema and the round proceeds on that single call.
+    prose = AIMessage(
+        content="Cache is idle and the hot files were just written.\n"
+        + f"```json\n{json.dumps(decision)}\n```"
+    )
+    model = model_factory(prose, ("PlanValidation", {"approved": True, "reason": "ok"}))
+
+    result = AgentWorkflow(model).run("Prepare the dataset")
+
+    assert result.decision.status == "action"
+    assert len(result.decision.steps) == 2
+    assert len(model.requests) == 2  # planner + validator, no retry
+
+
+def test_prose_without_json_is_retried_once_with_a_reminder(model_factory, decision):
+    prose = AIMessage(content="The cache is nearly empty; expanding looks wise.")
+    model = model_factory(
+        prose,
+        ("Decision", decision),
+        ("PlanValidation", {"approved": True, "reason": "ok"}),
+    )
+
+    result = AgentWorkflow(model).run("Prepare the dataset")
+
+    assert result.decision.status == "action"
+    assert len(model.requests) == 3  # prose, reminded retry, validator
+    reminder = model.requests[1][-1].content
+    assert "Call the required tool again" in reminder
+    # The original planner thread is preserved ahead of the reminder
+    assert model.requests[1][:-1] == model.requests[0]
 
 
 @pytest.mark.parametrize("failing_stage", ["planner", "validator"])

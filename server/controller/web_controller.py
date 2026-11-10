@@ -197,7 +197,10 @@ class WebSettings:
     (resolution lives in server/config.py).
     """
 
-    host: str = "127.0.0.1"
+    # All interfaces, matching bin/_lib.sh: a reverse proxy on another host must
+    # be able to reach this API, and the key check (from_env) is the gate that
+    # keeps an unauthenticated instance off the network.
+    host: str = "0.0.0.0"
     port: int = 8000
     # Cluster targeting shares its source with run_collectors.py (the target section
     # of config.yml).

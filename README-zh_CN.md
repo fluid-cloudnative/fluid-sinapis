@@ -21,9 +21,9 @@ Fluid 本身已经具备完整的弹性能力，但这些能力的“开关”�
 
 - __多源指标数据采集存储__
 
-  可插拔采集器类，拉取 Fluid 原生 Metrics 与 K8s Metrics API（Pod/节点资源），统一封装成 Prometheus Metric 落库；新增采集器是在 `server/collectors/run_collectors.py` 注册一个类。外部业务流量数据无需改核心代码：在 `config.yml` 的 `user_system` 段声明后经 HTTP 推送接入
+  可插拔采集器类，拉取 Fluid 原生 Metrics 与 K8s Metrics API（Pod/节点资源），统一封装成 Prometheus Metric 落库；新增采集器是在 `server/collectors/run_collectors.py` 注册一个类。业务流量数据无需改核心代码：在 `config.yml` 的 `user_system` 段声明后经 HTTP 推送接入
 
-- __用户系统外接数据接入（被动推送）__
+- __大模型智能体系统数据接入（被动推送）__
 
   无法主动拉取的数据由用户系统主动 POST 过来，服务端校验后写入 Prometheus。**`server/config.yml` 的 `user_system` 段修改无需重启**（按文件修改时间检测，约 1 秒内生效）；其余段修改需重启。详见：[用户自定义策略与指标接入](docs/zh/custom-strategies-and-metrics.md)
 
