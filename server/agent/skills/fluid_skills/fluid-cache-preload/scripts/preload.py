@@ -94,16 +94,27 @@ def wait_phase(
     api: client.CustomObjectsApi, namespace: str, name: str,
     timeout: float, interval: float,
 ) -> tuple[str, bool]:
-    """Poll status.phase until a terminal phase; return (last phase seen, timed_out)."""
+    """Poll status.phase until a terminal phase; return (last phase seen, timed_out).
+
+    A transient API error does not abort the wait (same semantics as the scale-up
+    skill): polling continues until the deadline and the last known phase is
+    reported, because an API hiccup says nothing about the DataLoad itself.
+    """
     deadline = time.monotonic() + timeout
     phase = ""
     while True:
-        resource = api.get_namespaced_custom_object(
-            GROUP, VERSION, namespace, "dataloads", name, _request_timeout=10
-        )
-        phase = extract_phase(resource)
-        if phase in (PHASE_COMPLETE, PHASE_FAILED):
-            return phase, False
+        resource = None
+        try:
+            resource = api.get_namespaced_custom_object(
+                GROUP, VERSION, namespace, "dataloads", name, _request_timeout=10
+            )
+        except ApiException as exc:
+            print(f"poll failed, retrying: {exc.status} {exc.reason or ''}".strip(),
+                  file=sys.stderr)
+        if resource is not None:
+            phase = extract_phase(resource)
+            if phase in (PHASE_COMPLETE, PHASE_FAILED):
+                return phase, False
         if time.monotonic() >= deadline:
             return phase, True
         time.sleep(interval)

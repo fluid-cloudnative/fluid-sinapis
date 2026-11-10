@@ -39,14 +39,14 @@ web/
 
 # 2. 启动前端 dev server（终端 2，/api 自动代理到 8000）
 cd web
-npm install
+npm ci          # 按已提交的 package-lock.json 可复现安装；仅增删依赖时才用 npm install 并提交新的锁文件
 npm run dev     # http://localhost:5173
 ```
 
 ## 生产构建
 
 ```bash
-cd web && npm run build
+cd web && npm ci && npm run build
 ```
 
 构建产物输出到 `web/dist`，后端启动后直接访问 `http://127.0.0.1:8000/` 即可，无需单独部署前端。
@@ -66,6 +66,10 @@ cd web && npm run build
 | `WEB_CACHE_TTL_SECONDS` | `5` | 采集结果缓存秒数 |
 
 ## 接口
+
+> **⚠ 安全提示**：以下接口均**无鉴权**。请保持 `WEB_HOST=127.0.0.1`（代码与
+> `bin/start.sh` 的默认值），不要把端口直接暴露到公网；确需局域网访问时，先在前面加
+> 一层带鉴权的反向代理或 API 网关（详见 `docs/*/user-guide.md` 第 7 节）。
 
 - `GET /api/overview` — K8s + Fluid 两个区块一次返回
 - `GET /api/k8s`、`GET /api/fluid` — 单个数据源

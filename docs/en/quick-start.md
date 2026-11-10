@@ -20,10 +20,17 @@ Check before starting (details in the [User Guide](user-guide.md#5-prepare-the-i
 ## 1. Get the Code and Install
 
 ```bash
-git clone https://github.com/<org>/fluid-sinapis-agent.git
-cd fluid-sinapis-agent
+git clone https://github.com/fluid-cloudnative/fluid-sinapis.git
+cd fluid-sinapis
 uv venv --python 3.12
 uv pip install -r server/requirements.txt -p .venv/bin/python
+```
+
+Optional, only if you want the web console page: build the frontend once (the API
+works without it; without `web/dist` the page answers 503):
+
+```bash
+cd web && npm ci && npm run build && cd ..
 ```
 
 ## 2. Minimal Configuration
@@ -55,8 +62,11 @@ bin/start.sh          # start all: collector → backend → frontend → agent
 
 - PIDs go to `run/`, logs to `logs/`; `bin/stop.sh` stops, `bin/restart.sh` restarts;
 - The backend listens on `127.0.0.1:8000` and its API data **always comes from real
-  cluster collection**;
-- The agent refuses to start without `LLM_API_KEY` and says so explicitly;
+  cluster collection**. `127.0.0.1` is deliberate: the HTTP API has **no
+  authentication**, so do not expose it to a LAN/public network without an
+  authenticating reverse proxy (`WEB_HOST=0.0.0.0` opens it to all interfaces);
+- The agent fails fast at startup when the `${...}` placeholder in `config.yml`
+  (e.g. `LLM_API_KEY`) references an unset environment variable, and says so explicitly;
 - For a first run, validate a single round before enabling the loop:
   ```bash
   .venv/bin/python -m server.agent.run_agents --once     # manual single round

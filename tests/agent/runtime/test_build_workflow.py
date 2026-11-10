@@ -7,8 +7,8 @@ from unittest.mock import patch
 import pytest
 
 from server.agent.config import RuntimeConfig
-from server.agent.run_agents import build_workflow
 from server.agent.prompts import WORKFLOW_REQUEST
+from server.agent.run_agents import build_workflow
 
 
 @pytest.mark.parametrize("partial", [False, True])

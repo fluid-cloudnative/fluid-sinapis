@@ -30,7 +30,7 @@ Fluid 本身已经具备完整的弹性能力，但这些能力的“开关”�
 
 - __Agent Loop 自主决策__
 
-	周期（如 1 分钟）读取时序指标 → 封装状态快照 → LLM 推理生成结构化执行计划 → LLM 二次校验 → 确定性执行器调用 Fluid 操作技能 → 记录结构化执行结果。
+	周期读取时序指标（间隔由 `agent.interval_seconds` 决定，默认 10 秒）→ 封装状态快照 → LLM 推理生成结构化执行计划 → LLM 二次校验 → 确定性执行器调用 Fluid 操作技能 → 记录结构化执行结果。
 
 - __Fluid缓存操作Skill__
 
@@ -72,7 +72,7 @@ Fluid 本身已经具备完整的弹性能力，但这些能力的“开关”�
 
 
 ## 欢迎加入与反馈
-Fluid-Sinapis-Agent让Fluid真正具有Agent自治的能力，开源只是一个起点，需要大家的共同参与。大家在使用过程发现Bug或需要的Feature，都可以直接在 [GitHub](https://github.com/<org>/fluid-sinapis-agent)上面提 issue 或 PR，一起参与讨论。
+Fluid-Sinapis-Agent让Fluid真正具有Agent自治的能力，开源只是一个起点，需要大家的共同参与。大家在使用过程发现Bug或需要的Feature，都可以直接在 [GitHub](https://github.com/fluid-cloudnative/fluid-sinapis)上面提 issue 或 PR，一起参与讨论。
 
 ## 开源协议
 Fluid-Sinapis-Agent采用Apache 2.0 license开源协议，详情参见[LICENSE](./LICENSE)文件。

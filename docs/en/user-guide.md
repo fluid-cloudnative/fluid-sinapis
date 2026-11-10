@@ -22,7 +22,8 @@ the full path from cloning the repo to a working end-to-end deployment.
 7. [Starting the System](#7-starting-the-system)
 8. [Verifying the Deployment](#8-verifying-the-deployment)
 9. [Recommendations for the First Run](#9-recommendations-for-the-first-run)
-10. [FAQ / Troubleshooting](#10-faq--troubleshooting)
+10. [Development acceptance checklist](#10-development-acceptance-checklist)
+11. [FAQ / Troubleshooting](#11-faq--troubleshooting)
 
 ---
 
@@ -71,14 +72,14 @@ scheduling, and it does not handle storage failures or network partitions.
 ## 3. Get the Code
 
 ```bash
-git clone https://github.com/<org>/fluid-sinapis-agent.git
-cd fluid-sinapis-agent
+git clone https://github.com/fluid-cloudnative/fluid-sinapis.git
+cd fluid-sinapis
 ```
 
 Layout at a glance:
 
 ```
-fluid-sinapis-agent/
+fluid-sinapis/
 ├── server/
 │   ├── config.yml            # the single config file (see section 6)
 │   ├── collectors/           # collectors (run_collectors.py)
@@ -115,12 +116,15 @@ python3.12 -m venv .venv
 
 Notes:
 
-- `server/requirements.txt` is exported from `pyproject.toml` via `uv export` — prefer it
-  over `uv sync` (the workspace `uv.lock` may be out of sync with the export);
+- **Use one canonical flow**: `server/requirements.txt` is the pinned dependency
+  list exported from `pyproject.toml` (`uv export --format requirements-txt >
+  server/requirements.txt` regenerates it after changing `pyproject.toml`). Install
+  from it as shown above. `uv.lock` is kept in sync — verify with `uv lock --check`;
 - Always start the processes with `.venv/bin/python`; the system Python (often 3.10) cannot
   install the dependencies;
 - Developers additionally need `pytest` and `ruff`: `uv pip install pytest ruff`, then run
-  tests with `.venv/bin/python -m pytest`.
+  tests with `.venv/bin/python -m pytest` (see the [development acceptance
+  checklist](#10-development-acceptance-checklist)).
 
 ---
 
@@ -210,8 +214,8 @@ prometheus:
   query_url: http://localhost:9090         # read
 
 agent:
-  interval_seconds: 60                     # decision loop period
-  validation_enabled: true                 # false = skip the second LLM review
+  interval_seconds: 10                     # decision loop period (matches config.yml)
+  validation_enabled: true                 # default in config.yml; false = skip the second LLM review
 
 model:                                     # shared defaults
   api_key: ${LLM_API_KEY}              # env-var placeholder only
@@ -258,7 +262,7 @@ Conventions and rules:
 | `PUSHGATEWAY_URL` / `PROMETHEUS_URL` / `PROMETHEUS_TIMEOUT_SECONDS` | `prometheus.*` | :9091 / :9090 / 10 |
 | `COLLECTOR_INTERVAL_SECONDS` | `collectors.interval_seconds` | 10 |
 | `LLM_API_KEY` etc. | `${...}` placeholders in `model.api_key` | unset → startup error |
-| `WEB_HOST` / `WEB_PORT` | web listen address | code default 127.0.0.1 / 8000; `bin/start.sh` overrides to 0.0.0.0 (LAN-accessible) |
+| `WEB_HOST` / `WEB_PORT` | web listen address | 127.0.0.1 / 8000 everywhere (code and `bin/start.sh`); set `WEB_HOST=0.0.0.0` only for deliberate LAN exposure — the API has no authentication, see the security note in section 7 |
 | `WEB_CACHE_TTL_SECONDS` / `WEB_CORS_ORIGINS` | web cache & CORS | 5 / localhost |
 | `WEB_CACHED_FILES_SCAN_PATH` / `WEB_CACHED_FILES_TTL_SECONDS` | Alluxio scan path / result cache time for the cached-files table | /models / 30 s |
 | `SINAPIS_USER_METRICS_CONFIG` | separate config file for the user-system metric/event definitions (web console) | defaults to the `SINAPIS_CONFIG` file |
@@ -267,6 +271,13 @@ Conventions and rules:
 ---
 
 ## 7. Starting the System
+
+> **⚠ Security note — the HTTP API has no authentication.** The backend serves the
+> read-only metric APIs *and* writable push endpoints (`POST /api/user-system/metrics`
+> and `POST /api/user-system/events`). Keep `WEB_HOST` on `127.0.0.1` (the default of
+> both the code and the start scripts), never expose the port directly to a public
+> network, and if LAN access is required put an authenticating reverse proxy or an
+> API gateway in front first.
 
 ### Option 1: one-shot scripts (recommended)
 
@@ -286,7 +297,8 @@ Notes:
 
 - PIDs go to `run/<service>.pid`, logs to `logs/<service>.log`; re-running start skips
   services that are already up;
-- The agent refuses to start without `LLM_API_KEY` and says so explicitly;
+- The agent fails fast at startup when a `${...}` placeholder in `config.yml` (e.g.
+  `LLM_API_KEY`) references an unset environment variable;
 - The backend listens on `127.0.0.1:8000` by default — override with
   `WEB_PORT=9000 bin/start.sh backend`; the frontend port defaults to 5173
   (`FRONTEND_PORT`);
@@ -295,7 +307,7 @@ Notes:
 - frontend: `bin/start.sh frontend` runs the vite dev server only when
   `web/node_modules` is present; otherwise it skips (exit 0) — with `web/dist` built the
   backend serves the page directly, and with neither the page answers 503 with build
-  instructions until you run `cd web && npm install && npm run build`.
+  instructions until you run `cd web && npm ci && npm run build`.
 
 ### Agent stage logs (logs/agent.log)
 
@@ -389,7 +401,23 @@ Every executed step carries an `exit_code` and the script's JSON output.
 
 ---
 
-## 10. FAQ / Troubleshooting
+## 10. Development acceptance checklist
+
+Run all of these from the repository root before considering a change done — the same
+checks run in CI (`.github/workflows/ci.yml`):
+
+```bash
+# Python: lint and full test suite
+python -m ruff check .
+python -m pytest tests -q
+
+# Web console: reproducible install from the committed lock file, then build
+cd web && npm ci && npm run build && cd ..
+```
+
+---
+
+## 11. FAQ / Troubleshooting
 
 **Q1: Startup fails with “config `k8s.namespace` has been merged into `target.namespace`”?**
 Leftover old keys. Move the values into the new sections as the error message says, delete
@@ -411,7 +439,7 @@ so internal cluster addresses (e.g. `*.local`) get hijacked by the proxy. Unset 
 variables or make sure the in-code direct-connection bypass is effective.
 
 **Q5: Web page returns 503 “frontend build not found”?**
-`web/dist` is missing: `cd web && npm install && npm run build`. Ignore if you only use the API.
+`web/dist` is missing: `cd web && npm ci && npm run build`. Ignore if you only use the API.
 
 **Q6: `uv sync` fails on the lock file?**
 If the workspace `uv.lock` is damaged (e.g. entries missing the source field), restore it

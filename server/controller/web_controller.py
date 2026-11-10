@@ -36,7 +36,7 @@ from server.agent.adapters.kubernetes import KubernetesAdapter
 from server.agent.schemas import CollectorSnapshot, Metric, Target
 from server.collectors import FluidCollector, K8sCollector
 from server.config import DEFAULT_CONFIG_PATH, DEFAULT_TARGET, AppConfig
-from server.controller.cached_files import CachedFileTracker, CachedFilesResponse
+from server.controller.cached_files import CachedFilesResponse, CachedFileTracker
 from server.controller.user_system_controller import (
     DEFAULT_USER_CONFIG,
     ConfigStore,
@@ -479,7 +479,7 @@ def _mount_frontend(app: FastAPI) -> None:
         return JSONResponse(
             status_code=503,
             content={
-                "detail": "frontend build not found; run: cd web && npm install && npm run build"
+                "detail": "frontend build not found; run: cd web && npm ci && npm run build"
             },
         )
 

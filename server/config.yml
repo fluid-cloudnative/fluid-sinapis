@@ -44,8 +44,10 @@ agent:
   interval_seconds: 10
   # Enable the second, independent review model call: true = one reasoning call
   # plus one review call; false = reasoning only, and its result is executed
-  # directly (the review model is never invoked).
-  validation_enabled: false
+  # directly (the review model is never invoked). Keep it true in production:
+  # the review is the guard against model hallucination, and the docs advertise
+  # dual-model validation as the default behavior.
+  validation_enabled: true
 
 # -- Execution-stage limits --------------------------------------------------
 execution:

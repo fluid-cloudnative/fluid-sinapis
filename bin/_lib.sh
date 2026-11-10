@@ -7,9 +7,11 @@ RUN_DIR="$REPO_ROOT/run"
 LOG_DIR="$REPO_ROOT/logs"
 WEB_PORT="${WEB_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
-# 0.0.0.0 exposes the console on all interfaces (LAN access); override back to
-# 127.0.0.1 when that is not wanted.
-WEB_HOST="${WEB_HOST:-0.0.0.0}"
+# Listen on localhost by default: the HTTP API (including the user-system push
+# endpoints) has no authentication of its own, so LAN/public exposure must be a
+# deliberate decision — set WEB_HOST=0.0.0.0 and front it with an authenticating
+# reverse proxy when external access is really needed.
+WEB_HOST="${WEB_HOST:-127.0.0.1}"
 export WEB_PORT FRONTEND_PORT WEB_HOST
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
@@ -66,10 +68,6 @@ start_service() {
                 echo "✗ $name was not started: $PYTHONBIN not found (install the dependencies first, see docs/en/user-guide.md)" >&2
                 return 1
             fi
-            if [ "$name" = "agent" ] && [ -z "${LLM_API_KEY:-}" ]; then
-                echo "✗ agent was not started: export LLM_API_KEY=<model key> first (the \${LLM_API_KEY} placeholder in config.yml needs it)" >&2
-                return 1
-            fi
             ;;
         frontend)
             # Node.js is optional: with a built web/dist the backend serves the page and
@@ -79,7 +77,7 @@ start_service() {
                 if [ -f "$REPO_ROOT/web/dist/index.html" ]; then
                     echo "• frontend needs no separate process: the backend serves web/dist (http://$WEB_HOST:$WEB_PORT/)"
                 else
-                    echo "• frontend skipped: no web/node_modules and no web/dist build; the page will answer 503 until you run: cd web && npm install && npm run build"
+                    echo "• frontend skipped: no web/node_modules and no web/dist build; the page will answer 503 until you run: cd web && npm ci && npm run build"
                 fi
                 return 0
             fi

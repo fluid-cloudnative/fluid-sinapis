@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from server.agent.schemas import Target
 from server.config import reject_migrated_keys
@@ -72,6 +72,19 @@ class ExecutionConfig(ConfigModel):
     # Dry-run switch: print what would be submitted without touching the cluster.
     # Turn it on for the first integration round.
     dry_run: bool = False
+
+    @model_validator(mode="after")
+    def check_timeouts(self) -> ExecutionConfig:
+        """Fail at startup on an inconsistent timeout pair instead of silently
+        rewriting the value at run time."""
+        if self.wait and self.timeout_seconds <= self.wait_timeout_seconds:
+            raise ValueError(
+                "execution.timeout_seconds must stay above execution.wait_timeout_seconds "
+                f"so a polling script is not killed mid-poll "
+                f"(got timeout_seconds={self.timeout_seconds:g}, "
+                f"wait_timeout_seconds={self.wait_timeout_seconds:g})"
+            )
+        return self
 
 
 class UserMetricConfig(ConfigModel):

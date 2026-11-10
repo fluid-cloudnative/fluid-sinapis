@@ -7,8 +7,8 @@ from unittest.mock import Mock
 import pytest
 
 from server.agent.config import RuntimeConfig
-from server.agent.workflow import WorkflowResult, run_loop
 from server.agent.prompts import WORKFLOW_REQUEST
+from server.agent.workflow import WorkflowResult, run_loop
 
 
 @pytest.fixture

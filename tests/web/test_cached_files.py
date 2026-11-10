@@ -128,7 +128,9 @@ def test_state_survives_tracker_restart(tmp_path):
         ttl_seconds=0.0, scanner=lambda: listing,
     )
     body = first.snapshot()
-    assert json.loads(state_path.read_text())["cached_since_ms"] == {
+    raw = json.loads(state_path.read_text())
+    assert raw["version"] == 2
+    assert raw["targets"]["t/ns/ds:/models"] == {
         "/models/data/big.zip": body.files[0].cached_at_ms,
     }
 
@@ -143,6 +145,53 @@ def test_state_survives_tracker_restart(tmp_path):
     # Even with the cluster unreachable the loaded state exists; a successful listing
     # would still report the file as cached since the original time.
     assert second._state == {"/models/data/big.zip": body.files[0].cached_at_ms}
+
+
+def test_state_is_scoped_per_target(tmp_path):
+    """Switching cluster/dataset/scan_path must not inherit another target's
+    cached_at values, and each target's state must survive the other's writes."""
+    listing = {"/models/data/big.zip": {"size_bytes": 10, "cache_pct": 100}}
+    state_path = tmp_path / "state.json"
+    first = CachedFileTracker(
+        kube_context="t", namespace="ns", dataset="ds", state_path=state_path,
+        ttl_seconds=0.0, scanner=lambda: listing,
+    )
+    body = first.snapshot()
+
+    # A different dataset sharing the same state file starts empty and must not
+    # overwrite the first target's state when persisting.
+    other = CachedFileTracker(
+        kube_context="t", namespace="ns", dataset="other", state_path=state_path,
+        ttl_seconds=0.0, scanner=lambda: listing,
+    )
+    assert other._state == {}
+    other.snapshot()
+
+    raw = json.loads(state_path.read_text())
+    assert set(raw["targets"]) == {"t/ns/ds:/models", "t/ns/other:/models"}
+    assert raw["targets"]["t/ns/ds:/models"] == {
+        "/models/data/big.zip": body.files[0].cached_at_ms,
+    }
+
+    again = CachedFileTracker(
+        kube_context="t", namespace="ns", dataset="ds", state_path=state_path,
+        ttl_seconds=0.0, scanner=lambda: listing,
+    )
+    assert again._state == {"/models/data/big.zip": body.files[0].cached_at_ms}
+
+
+def test_legacy_state_file_is_discarded_not_reused(tmp_path):
+    """A v1 state file has no target scoping; reusing it would silently inherit
+    another target's cached_at values, so it is dropped instead."""
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps({"cached_since_ms": {"/models/data/old.zip": 123}}), encoding="utf-8"
+    )
+    tracker = CachedFileTracker(
+        kube_context="t", namespace="ns", dataset="ds", state_path=state_path,
+        ttl_seconds=0.0, scanner=lambda: {},
+    )
+    assert tracker._state == {}
 
 
 def test_scan_failure_is_an_error_payload_and_keeps_state(tmp_path):

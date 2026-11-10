@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Callable
+from collections.abc import Callable
 
-from server.prometheus.prometheus_client import (
-    PrometheusClient, SnapshotStore,
-)
 from server.agent.schemas import CollectorSnapshot
+from server.prometheus.prometheus_client import (
+    PrometheusClient,
+    SnapshotStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class CollectorScheduler:
         self._thread: threading.Thread | None = None
 
     def register(self, name: str,
-                 collect_once: Callable[[], CollectorSnapshot]) -> "CollectorScheduler":
+                 collect_once: Callable[[], CollectorSnapshot]) -> CollectorScheduler:
         if not name.strip():
             raise ValueError("collector name must not be empty")
         self._jobs.append((name, collect_once))

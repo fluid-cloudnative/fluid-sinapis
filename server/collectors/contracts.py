@@ -3,8 +3,8 @@ prometheus package directly."""
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 import time
+from abc import ABC, abstractmethod
 
 from server.agent.schemas import CollectorSnapshot, Metric
 

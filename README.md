@@ -30,7 +30,7 @@ Fluid already has complete elastic capabilities, but the "switches" of these cap
 
 - __Agent Loop autonomous decision-making__
 
-  Reads time-series metrics periodically (e.g. every minute) → wraps a state snapshot → LLM reasoning produces a structured execution plan → second LLM validation → the deterministic executor invokes Fluid operation skills → structured execution results are recorded.
+  Reads time-series metrics periodically (per `agent.interval_seconds`, default 10 seconds) → wraps a state snapshot → LLM reasoning produces a structured execution plan → second LLM validation → the deterministic executor invokes Fluid operation skills → structured execution results are recorded.
 
 - __Fluid cache operation skills__
 
@@ -78,7 +78,7 @@ walkthrough see the [User Guide](docs/en/user-guide.md). (中文版：[docs/zh/q
 
 ## Join Us and Give Feedback
 
-Fluid-Sinapis-Agent brings true agent autonomy to Fluid, and open source is only the starting point. If you find bugs or want new features while using it, please open an issue or PR on [GitHub](https://github.com/<org>/fluid-sinapis-agent) and join the discussion.
+Fluid-Sinapis-Agent brings true agent autonomy to Fluid, and open source is only the starting point. If you find bugs or want new features while using it, please open an issue or PR on [GitHub](https://github.com/fluid-cloudnative/fluid-sinapis) and join the discussion.
 
 ## License
 

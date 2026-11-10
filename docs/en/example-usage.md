@@ -45,7 +45,23 @@ does not model a request rate. The `source` identity defaults to
   ```
 
   Upload the six files to HDFS and create a Fluid Dataset mounted at `/models/data`;
-  continue only once the Dataset is mounted.
+  continue only once the Dataset is mounted. Verify before starting:
+
+  ```bash
+  # Dataset and Runtime exist and are bound (adjust -n and names to your target section)
+  kubectl -n <namespace> get dataset <dataset>
+  kubectl -n <namespace> get alluxioruntime <runtime>
+  ```
+
+  If a later step misbehaves, these are the shortest checks:
+
+  ```bash
+  kubectl -n <namespace> get dataload            # DataLoads created by the agent (preload)
+  kubectl -n <namespace> get alluxioruntime <runtime> -o jsonpath='{.status.replicas}{"\n"}'
+                                                 # replica count after expand/shrink
+  kubectl -n <namespace> get pods -l fluid.io/dataset=<namespace>-<dataset>
+                                                 # worker pods Ready?
+  ```
 - Capacity assumption: **one worker, 5 GiB of cache**. 108+109 are 3.41 GiB (68 % used) and
   fit; adding 104+105 needs 8.80 GiB and does not.
 
@@ -130,8 +146,9 @@ Check `GET /api/user-system/metrics/schema`: the event/metric is not in the conf
 config.yml, wait ~1 s for the hot reload, and retry.
 
 **Q2: Pushes succeed but the agent does nothing?**
-The agent decides on a period (default 60 s) and needs observation windows to accumulate
-data; confirm the agent process is running and Prometheus can evaluate
+The agent decides on a period (default 10 s, `agent.interval_seconds` in
+`server/config.yml`) and needs observation windows to accumulate data; confirm the agent
+process is running and Prometheus can evaluate
 `rate(model_file_access_count[5m])`. Use `--once` to trigger a round immediately.
 
 **Q3: `preload` does not preload anything?**

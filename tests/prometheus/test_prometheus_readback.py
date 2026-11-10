@@ -20,18 +20,18 @@ identical series), so delete the old one first:
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Mapping
+from typing import Any
 
 # * Lets tests/ import server (works no matter which directory the script starts from)
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from server.prometheus import configure
 from server.agent.schemas import CollectorSnapshot, Metric
+from server.prometheus import configure
 
 
 # ══════════════════════════════════════════════════════════════
@@ -110,7 +110,7 @@ class PrometheusReadbackTest:
             ctx=ctx, namespace=namespace,
             fluid_runtime=fluid_runtime, fluid_plural=fluid_plural,
         )
-        self.results: List[Dict[str, Any]] = []
+        self.results: list[dict[str, Any]] = []
 
     # ---------- main flow ---------- #
     def run(self) -> bool:
@@ -128,8 +128,8 @@ class PrometheusReadbackTest:
         print(f"\n⏳ polling until the metrics reach Prometheus (up to {self.wait_seconds:g}s)…")
 
         # 3. read: verify both metric families
-        fluid_ok = self._readback(fluid_snap, "Fluid")
-        k8s_ok = self._readback(k8s_snap, "K8s")
+        self._readback(fluid_snap, "Fluid")
+        self._readback(k8s_snap, "K8s")
 
         # 4. summary
         print("\n" + "═" * 78)
@@ -157,7 +157,7 @@ class PrometheusReadbackTest:
 
     # ---------- read and compare ---------- #
     def _wait_for(self, name: str, labels: Mapping[str, str],
-                  expected: float) -> List[Metric]:
+                  expected: float) -> list[Metric]:
         """Poll until the expected value is read (Prometheus scraped this push) or timeout.
 
         When the metric already exists, the newest sample may still be the previous
@@ -165,7 +165,7 @@ class PrometheusReadbackTest:
         so the value must match rather than the metric merely appearing.
         """
         deadline = time.monotonic() + self.wait_seconds
-        got: List[Metric] = []
+        got: list[Metric] = []
         while True:
             got = self.client.reader.current(name, labels)
             if got and any(abs(x.value - expected) < 1e-6 for x in got):
@@ -220,7 +220,7 @@ class PrometheusReadbackTest:
 # ══════════════════════════════════════════════════════════════
 # 3) entry point
 # ══════════════════════════════════════════════════════════════
-def _trim_labels(labels: Dict[str, str], maxlen: int = 70) -> str:
+def _trim_labels(labels: dict[str, str], maxlen: int = 70) -> str:
     s = ", ".join(f'{k}="{v}"' for k, v in labels.items())
     return s if len(s) <= maxlen else s[:maxlen] + "…"
 
@@ -228,7 +228,7 @@ def _trim_labels(labels: Dict[str, str], maxlen: int = 70) -> str:
 def _ts(ms: int | None) -> str:
     if not ms:
         return "-"
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%H:%M:%S")
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).strftime("%H:%M:%S")
 
 
 def main() -> int:

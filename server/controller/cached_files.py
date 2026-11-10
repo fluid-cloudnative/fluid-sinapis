@@ -45,6 +45,10 @@ DEFAULT_SCAN_PATH = "/models"
 DEFAULT_TTL_SECONDS = 30.0
 DEFAULT_EXEC_TIMEOUT = 120.0
 DEFAULT_STATE_PATH = RUN_DIR / "cached-files-state.json"
+# State file format version: v2 scopes the path -> entry-time map per target
+# (kube_context/namespace/dataset/scan_path), so switching the target cannot
+# inherit another cluster's or dataset's cached_at values.
+STATE_VERSION = 2
 
 # ls line (modern Alluxio): size PERSISTED date time cache%|DIR path
 LS_LINE_MODERN = re.compile(
@@ -222,6 +226,9 @@ class CachedFileTracker:
         self._now_ms = now_ms
         self._scanner = scanner or self._scan_cluster
         self._lock = threading.Lock()
+        # Identity of this tracker's target: the persisted state is scoped by it, so
+        # two targets sharing one state file never read each other's entry times.
+        self._identity = f"{kube_context}/{namespace}/{dataset}:{scan_path}"
         self._state: dict[str, int] = self._load_state()
         self._cached: CachedFilesResponse | None = None
         self._cache_until = 0.0
@@ -311,10 +318,14 @@ class CachedFileTracker:
 
     # -- persistence ------------------------------------------ #
     def _load_state(self) -> dict[str, int]:
+        """Load only this target's entry times; other targets' state stays intact.
+
+        A legacy (v1) file has no target information, so reusing it for an arbitrary
+        target would silently inherit another cluster/dataset's cached_at values —
+        it is discarded instead, which only re-stamps entry times with "now".
+        """
         try:
             raw = json.loads(self._state_path.read_text(encoding="utf-8"))
-            state = raw.get("cached_since_ms", {})
-            return {str(path): int(value) for path, value in state.items()}
         except FileNotFoundError:
             return {}
         except (OSError, ValueError, TypeError, AttributeError) as exc:
@@ -322,11 +333,36 @@ class CachedFileTracker:
             logger.warning("Ignoring unreadable cached-files state %s: %s",
                            self._state_path, exc)
             return {}
+        if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION:
+            logger.warning(
+                "Discarding cached-files state %s written without target scoping; "
+                "entry times restart from now for %s", self._state_path, self._identity,
+            )
+            return {}
+        state = (raw.get("targets") or {}).get(self._identity) or {}
+        try:
+            return {str(path): int(value) for path, value in state.items()}
+        except (TypeError, ValueError, AttributeError) as exc:
+            logger.warning("Ignoring unreadable cached-files state for %s: %s",
+                           self._identity, exc)
+            return {}
 
     def _persist(self) -> None:
-        """Atomic write; a failed write degrades to losing entry times on restart."""
-        payload = json.dumps({"cached_since_ms": self._state}, ensure_ascii=False)
+        """Atomic write, merged with the other targets' state in the same file; a
+        failed write degrades to losing entry times on restart."""
         try:
+            other_targets: dict[str, Any] = {}
+            if self._state_path.is_file():
+                try:
+                    raw = json.loads(self._state_path.read_text(encoding="utf-8"))
+                    if isinstance(raw, dict) and raw.get("version") == STATE_VERSION \
+                            and isinstance(raw.get("targets"), dict):
+                        other_targets = raw["targets"]
+                except (OSError, ValueError, TypeError):
+                    pass
+            targets = {**other_targets, self._identity: self._state}
+            payload = json.dumps({"version": STATE_VERSION, "targets": targets},
+                                 ensure_ascii=False)
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
             tmp.write_text(payload, encoding="utf-8")
