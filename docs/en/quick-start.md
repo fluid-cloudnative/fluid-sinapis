@@ -20,10 +20,17 @@ Check before starting (details in the [User Guide](user-guide.md#5-prepare-the-i
 ## 1. Get the Code and Install
 
 ```bash
-git clone https://github.com/<org>/fluid-sinapis-agent.git
-cd fluid-sinapis-agent
+git clone https://github.com/fluid-cloudnative/fluid-sinapis.git
+cd fluid-sinapis
 uv venv --python 3.12
 uv pip install -r server/requirements.txt -p .venv/bin/python
+```
+
+Optional, only if you want the web console page: build the frontend once (the API
+works without it; without `web/dist` the page answers 503):
+
+```bash
+cd web && npm ci && npm run build && cd ..
 ```
 
 ## 2. Minimal Configuration
@@ -38,11 +45,18 @@ target:
   runtime_name: nju-model-hdfs             # empty = follow dataset
 ```
 
-Export the model key:
+Export the model key and the API key:
 
 ```bash
 export LLM_API_KEY=<your key>
+export SINAPIS_API_KEY=$(openssl rand -hex 32)   # generate ONCE, then persist (see below)
 ```
+
+> The API key protects every HTTP endpoint (`Authorization: Bearer`). Generate it
+> once and persist it in your deployment environment (shell profile, systemd
+> `EnvironmentFile`, …) — it must stay the same across restarts and must never be
+> committed to git. Pushers and the web console send the same key; details in the
+> [user guide](user-guide.md#api-key-authentication).
 
 ## 3. Start
 
@@ -54,9 +68,15 @@ bin/start.sh          # start all: collector → backend → frontend → agent
 ```
 
 - PIDs go to `run/`, logs to `logs/`; `bin/stop.sh` stops, `bin/restart.sh` restarts;
+- The backend refuses to start without `SINAPIS_API_KEY` and every endpoint requires
+  `Authorization: Bearer <key>` (clearly opt out with `SINAPIS_AUTH_DISABLED=true`
+  for a keyless local run only);
 - The backend listens on `127.0.0.1:8000` and its API data **always comes from real
-  cluster collection**;
-- The agent refuses to start without `LLM_API_KEY` and says so explicitly;
+  cluster collection**. Keep `127.0.0.1` unless you deliberately expose it: the key
+  travels over plain HTTP, so LAN/public exposure needs a TLS-terminating reverse
+  proxy (`WEB_HOST=0.0.0.0` opens it to all interfaces);
+- The agent fails fast at startup when the `${...}` placeholder in `config.yml`
+  (e.g. `LLM_API_KEY`) references an unset environment variable, and says so explicitly;
 - For a first run, validate a single round before enabling the loop:
   ```bash
   .venv/bin/python -m server.agent.run_agents --once     # manual single round

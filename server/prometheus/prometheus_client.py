@@ -13,7 +13,8 @@ import json
 import logging
 import threading
 from abc import ABC, abstractmethod
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from server.agent.schemas import CollectorSnapshot, Metric
 
@@ -180,7 +181,7 @@ class SnapshotReader(MetricsReader):
     """Read the latest local snapshot (fallback when Prometheus is not wired up, or
     for fast in-process lookups from strategies)."""
 
-    def __init__(self, store: "SnapshotStore") -> None:
+    def __init__(self, store: SnapshotStore) -> None:
         self._store = store
 
     def current(self, name: str,

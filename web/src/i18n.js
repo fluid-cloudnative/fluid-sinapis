@@ -46,6 +46,13 @@ const STRINGS = {
     dataSource: 'Data source: server/collectors (FluidCollector / K8sCollector)',
     apiEndpoints: 'API /api/overview · /api/cached-files',
 
+    apiKeyRequired: 'API key required or invalid',
+    apiKeyTitle: 'API key',
+    apiKeyPrompt: 'This console requires the API key configured on the backend (SINAPIS_API_KEY). It is stored in this browser only.',
+    apiKeyPlaceholder: 'Paste the API key',
+    apiKeySave: 'Save and reload',
+    apiKeyWrong: 'The key was rejected (401). Check it and try again.',
+
     fluidCaption: 'Used cache ÷ total capacity',
     k8sCaption: 'Scheduled memory ÷ allocatable memory',
     metricCount: '{n} metrics',
@@ -105,6 +112,13 @@ const STRINGS = {
     reload: '重新加载',
     dataSource: '数据来源：server/collectors（FluidCollector / K8sCollector）',
     apiEndpoints: '接口 /api/overview · /api/cached-files',
+
+    apiKeyRequired: 'API Key 缺失或无效',
+    apiKeyTitle: 'API Key',
+    apiKeyPrompt: '本控制台需要后端配置的 API Key（SINAPIS_API_KEY）。Key 只保存在本浏览器中。',
+    apiKeyPlaceholder: '粘贴 API Key',
+    apiKeySave: '保存并加载',
+    apiKeyWrong: 'Key 未通过校验（401），请检查后重试。',
 
     fluidCaption: '已用缓存 ÷ 缓存总容量',
     k8sCaption: '已调度内存 ÷ 可分配内存',

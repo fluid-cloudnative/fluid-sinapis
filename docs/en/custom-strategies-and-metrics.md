@@ -96,6 +96,7 @@ Naming rules:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/user-system/metrics \
+  -H "Authorization: Bearer $SINAPIS_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "source": "model-service-01",
@@ -105,6 +106,8 @@ curl -X POST http://127.0.0.1:8000/api/user-system/metrics \
   }'
 ```
 
+- Every endpoint requires the API key (see the
+  [API key section](user-guide.md#api-key-authentication) in the user guide);
 - `source`: identity of the pushing system, used as the Prometheus grouping key;
 - `metrics[]`: `name` must be in the configured list; `value` must be a finite number;
   metrics declaring `labels` in the config must carry those keys (extra keys are preserved).
@@ -113,6 +116,7 @@ curl -X POST http://127.0.0.1:8000/api/user-system/metrics \
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/user-system/events \
+  -H "Authorization: Bearer $SINAPIS_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "source": "model-service-01",

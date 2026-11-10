@@ -33,6 +33,7 @@ Run preload first and let the agent finish caching 108/109 before running expand
 two pushes are what separate "the cache filled up" from "the working set grew".
 
 Usage:
+  export SINAPIS_API_KEY=<key>          # the key the backend was started with
   python examples/user_system_simulator.py --scenario preload
   python examples/user_system_simulator.py --scenario expand
 """
@@ -41,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 import time
@@ -80,23 +82,31 @@ def bandwidth_sample() -> float:
     return round(random.uniform(*BANDWIDTH_BAND), 2)
 
 
-def post_json(url: str, payload: dict) -> dict:
+def post_json(url: str, payload: dict, api_key: str) -> dict:
     request = urllib.request.Request(
         url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=10) as response:
         return json.load(response)
 
 
-def get_json(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=10) as response:
+def get_json(url: str, api_key: str) -> dict:
+    request = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
         return json.load(response)
 
 
-def push_once(base: str, source: str, paths: tuple[str, ...], accesses: int) -> None:
+def push_once(base: str, source: str, paths: tuple[str, ...], accesses: int,
+              api_key: str) -> None:
     """Push one batch of access events plus one bandwidth sample; raise if rejected."""
     now_ms = int(time.time() * 1000)
     events = [
@@ -109,11 +119,11 @@ def push_once(base: str, source: str, paths: tuple[str, ...], accesses: int) -> 
         for _ in range(accesses)
     ]
     event = post_json(f"{base}/api/user-system/events",
-                      {"source": source, "events": events})
+                      {"source": source, "events": events}, api_key)
     metric = post_json(f"{base}/api/user-system/metrics", {
         "source": source,
         "metrics": [{"name": "model_download_bandwidth", "value": bandwidth_sample()}],
-    })
+    }, api_key)
     if event["rejected"] or metric["rejected"]:
         raise RuntimeError(
             f"push was partially rejected: events={event['results']} metrics={metric['results']}"
@@ -126,6 +136,8 @@ def main() -> int:
     )
     parser.add_argument("--url", default="http://127.0.0.1:8000",
                         help="web_controller base URL (default http://127.0.0.1:8000)")
+    parser.add_argument("--api-key", default=os.environ.get("SINAPIS_API_KEY", ""),
+                        help="API key the backend requires (default: env SINAPIS_API_KEY)")
     parser.add_argument("--source", default="hdfs-simulator",
                         help="pusher identity, used as the Prometheus grouping key source")
     parser.add_argument("--scenario", required=True, choices=("preload", "expand"),
@@ -133,10 +145,14 @@ def main() -> int:
                              "expand: heat 104/105 on top of them (8.80GiB > 5GiB)")
     args = parser.parse_args()
     base = args.url.rstrip("/")
+    if not args.api_key:
+        print("no API key: export SINAPIS_API_KEY=<key> (or pass --api-key) — the "
+              "backend rejects unauthenticated requests")
+        return 1
     paths = PRELOAD_FILES if args.scenario == "preload" else EXPAND_FILES
     accesses = SCENARIO_ACCESSES[args.scenario]
 
-    schema = get_json(f"{base}/api/user-system/metrics/schema")
+    schema = get_json(f"{base}/api/user-system/metrics/schema", args.api_key)
     cfg = schema["config"]
 
     def counted(number: int, noun: str) -> str:
@@ -151,7 +167,7 @@ def main() -> int:
           f"{human(total)} (one push)")
 
     try:
-        push_once(base, args.source, paths, accesses)
+        push_once(base, args.source, paths, accesses, args.api_key)
     except (urllib.error.URLError, RuntimeError) as exc:
         # URLError covers HTTPError and connection-level failures (refused, timeout).
         print(f"push failed: {exc}")

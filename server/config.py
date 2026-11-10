@@ -39,7 +39,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config.yml"
 
 # Fallback used when config.yml has no target section (empty runtime_name = follow dataset).
-DEFAULT_TARGET = Target(
+# Built with model_construct so runtime_name stays empty here: Target's own validator
+# resolves it against the merged dataset only when the final Target(**merged) is built,
+# so an overridden dataset still wins over the default's runtime name.
+DEFAULT_TARGET = Target.model_construct(
     kube_context="kubernetes-admin@cluster",
     namespace="jgd-fluid",
     dataset="nju-model-hdfs",

@@ -21,16 +21,16 @@ Fluid 本身已经具备完整的弹性能力，但这些能力的“开关”�
 
 - __多源指标数据采集存储__
 
-  可插拔采集器类，拉取 Fluid 原生 Metrics 与 K8s Metrics API（Pod/节点资源），统一封装成 Prometheus Metric 落库；新增采集器是在 `server/collectors/run_collectors.py` 注册一个类。外部业务流量数据无需改核心代码：在 `config.yml` 的 `user_system` 段声明后经 HTTP 推送接入
+  可插拔采集器类，拉取 Fluid 原生 Metrics 与 K8s Metrics API（Pod/节点资源），统一封装成 Prometheus Metric 落库；新增采集器是在 `server/collectors/run_collectors.py` 注册一个类。业务流量数据无需改核心代码：在 `config.yml` 的 `user_system` 段声明后经 HTTP 推送接入
 
-- __用户系统外接数据接入（被动推送）__
+- __大模型智能体系统数据接入（被动推送）__
 
   无法主动拉取的数据由用户系统主动 POST 过来，服务端校验后写入 Prometheus。**`server/config.yml` 的 `user_system` 段修改无需重启**（按文件修改时间检测，约 1 秒内生效）；其余段修改需重启。详见：[用户自定义策略与指标接入](docs/zh/custom-strategies-and-metrics.md)
 
 
 - __Agent Loop 自主决策__
 
-	周期（如 1 分钟）读取时序指标 → 封装状态快照 → LLM 推理生成结构化执行计划 → LLM 二次校验 → 确定性执行器调用 Fluid 操作技能 → 记录结构化执行结果。
+	周期读取时序指标（间隔由 `agent.interval_seconds` 决定，默认 10 秒）→ 封装状态快照 → LLM 推理生成结构化执行计划 → LLM 二次校验 → 确定性执行器调用 Fluid 操作技能 → 记录结构化执行结果。
 
 - __Fluid缓存操作Skill__
 
@@ -72,7 +72,7 @@ Fluid 本身已经具备完整的弹性能力，但这些能力的“开关”�
 
 
 ## 欢迎加入与反馈
-Fluid-Sinapis-Agent让Fluid真正具有Agent自治的能力，开源只是一个起点，需要大家的共同参与。大家在使用过程发现Bug或需要的Feature，都可以直接在 [GitHub](https://github.com/<org>/fluid-sinapis-agent)上面提 issue 或 PR，一起参与讨论。
+Fluid-Sinapis-Agent让Fluid真正具有Agent自治的能力，开源只是一个起点，需要大家的共同参与。大家在使用过程发现Bug或需要的Feature，都可以直接在 [GitHub](https://github.com/fluid-cloudnative/fluid-sinapis)上面提 issue 或 PR，一起参与讨论。
 
 ## 开源协议
 Fluid-Sinapis-Agent采用Apache 2.0 license开源协议，详情参见[LICENSE](./LICENSE)文件。

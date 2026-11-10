@@ -267,6 +267,61 @@ code {
   margin-bottom: 12px;
 }
 
+/* API-key gate: full-panel prompt shown when a request comes back 401 */
+.auth-gate {
+  display: flex;
+  justify-content: center;
+  padding: 48px 16px;
+}
+
+.auth-card {
+  max-width: 420px;
+  width: 100%;
+  padding: 28px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.auth-card h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.auth-card p {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #475569;
+}
+
+.auth-card .auth-wrong {
+  color: #912018;
+}
+
+.auth-card form {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-card input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.auth-card input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
 .banner strong {
   font-weight: 600;
 }

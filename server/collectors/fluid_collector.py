@@ -8,12 +8,11 @@ your cluster; if they differ, change them only here.
 
 from __future__ import annotations
 
-from server.agent.adapters.kubernetes import KubernetesAdapter
-from server.collectors.contracts import Collector, qty_to_bytes
-from server.agent.schemas import CollectorSnapshot, Target
-
 # Keep in sync with manifests.GROUP / VERSION; do not hardcode literals here.
 from server.agent.adapters.fluid import GROUP, VERSION
+from server.agent.adapters.kubernetes import KubernetesAdapter
+from server.agent.schemas import CollectorSnapshot, Target
+from server.collectors.contracts import Collector, qty_to_bytes
 
 
 class FluidCollector(Collector):
@@ -62,9 +61,11 @@ class FluidCollector(Collector):
                       "namespace": self._t.namespace,
                       "runtime": self._t.runtime_name},
             metrics=[
-                self.gauge(self._CAP,     "Total Fluid cache capacity in bytes.", total, labels, ts),
-                self.gauge(self._PER,     "Average Fluid cache capacity per ready worker, in bytes.",
-                          per_worker, labels, ts),
+                self.gauge(self._CAP,
+                           "Total Fluid cache capacity in bytes.", total, labels, ts),
+                self.gauge(self._PER,
+                           "Average Fluid cache capacity per ready worker, in bytes.",
+                           per_worker, labels, ts),
                 self.gauge(self._WORK,    "Number of ready Fluid worker replicas.",
                            workers, labels, ts),
                 self.gauge(self._DESIRED, "Configured Fluid worker replica count (spec.replicas).",

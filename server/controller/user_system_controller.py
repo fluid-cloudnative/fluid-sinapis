@@ -523,6 +523,11 @@ def create_user_system_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/api/user-system", tags=["user-system"])
     accumulator = accumulator or EventAccumulator()
+    # Serializes "snapshot → write → commit" across concurrent event pushes: pending()
+    # and commit() lock separately by design (the write happens outside the lock), so
+    # two overlapping pushes would each snapshot the same pre-existing state and the
+    # second write would overwrite the first commit's counts, silently dropping them.
+    write_lock = threading.Lock()
 
     def _config_info(state: ConfigState) -> ConfigInfo:
         return ConfigInfo(
@@ -683,21 +688,25 @@ def create_user_system_router(
             # the full counter state once per source and double-count it in PromQL.
             # Store every dimension: pushing only this dimension would evict the other
             # files' series from their current values.
-            snapshot = _build_snapshot(
-                "user_system",
-                _accumulated_metrics(state.events, accumulator.pending(accepted_events)),
-                collector=SNAPSHOT_COLLECTOR_EVENTS,
-            )
-            try:
-                sink.write(snapshot)
-            except Exception as exc:  # noqa: BLE001 - a write failure must surface to the pusher
-                logger.error("Writing external events failed: %s", exc, exc_info=exc)
-                raise HTTPException(
-                    status_code=502, detail=f"failed to write to Prometheus: {exc}"
-                ) from exc
-            # Commit only after the write succeeded: on a 502 the counters are unchanged,
-            # so a client retry cannot double-count.
-            accumulator.commit(accepted_events)
+            #
+            # The whole snapshot → write → commit sequence holds write_lock so a
+            # concurrent push cannot overwrite this push's counters with a stale
+            # snapshot (commit only happens after the write succeeded; on a 502 the
+            # counters are unchanged, so a client retry cannot double-count).
+            with write_lock:
+                snapshot = _build_snapshot(
+                    "user_system",
+                    _accumulated_metrics(state.events, accumulator.pending(accepted_events)),
+                    collector=SNAPSHOT_COLLECTOR_EVENTS,
+                )
+                try:
+                    sink.write(snapshot)
+                except Exception as exc:  # noqa: BLE001 - a write failure must surface to the pusher
+                    logger.error("Writing external events failed: %s", exc, exc_info=exc)
+                    raise HTTPException(
+                        status_code=502, detail=f"failed to write to Prometheus: {exc}"
+                    ) from exc
+                accumulator.commit(accepted_events)
         return EventsResponse(
             accepted=accepted,
             rejected=len(results) - accepted,

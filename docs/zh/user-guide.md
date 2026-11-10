@@ -21,7 +21,8 @@ Fluid-Sinapis-Agent 是一套基于大模型智能体构建的 Fluid 弹性缓�
 7. [启动](#7-启动)
 8. [验证运行状态](#8-验证运行状态)
 9. [首次运行建议](#9-首次运行建议)
-10. [常见问题](#10-常见问题)
+10. [开发验收清单](#10-开发验收清单)
+11. [常见问题](#11-常见问题)
 
 ---
 
@@ -68,14 +69,14 @@ Fluid-Sinapis-Agent 是一套基于大模型智能体构建的 Fluid 弹性缓�
 ## 3. 下载代码
 
 ```bash
-git clone https://github.com/<org>/fluid-sinapis-agent.git
-cd fluid-sinapis-agent
+git clone https://github.com/fluid-cloudnative/fluid-sinapis.git
+cd fluid-sinapis
 ```
 
 目录速览：
 
 ```
-fluid-sinapis-agent/
+fluid-sinapis/
 ├── server/
 │   ├── config.yml            # 唯一配置文件（见第 6 节）
 │   ├── collectors/           # 采集器（run_collectors.py）
@@ -112,9 +113,13 @@ python3.12 -m venv .venv
 
 说明：
 
-- `server/requirements.txt` 是由 `uv export` 从 `pyproject.toml` 生成的锁定版本清单，**优先用它**而不是 `uv sync`（工作区的 `uv.lock` 可能与导出状态不同步）；
+- **只用一条推荐流程**：`server/requirements.txt` 是由 `uv export` 从 `pyproject.toml`
+  导出的锁定版本清单（改了 `pyproject.toml` 后用
+  `uv export --format requirements-txt > server/requirements.txt` 重新生成），按上面的
+  命令安装即可。`uv.lock` 与其保持同步，可用 `uv lock --check` 校验；
 - 之后所有进程统一用 `.venv/bin/python` 启动，避免误用系统 Python（通常是 3.10，装不了依赖）；
-- 开发者另需 `pytest`、`ruff`：`uv pip install pytest ruff`，测试用 `.venv/bin/python -m pytest` 运行。
+- 开发者另需 `pytest`、`ruff`：`uv pip install pytest ruff`，测试用 `.venv/bin/python -m pytest`
+  运行（完整验收清单见[第 10 节](#10-开发验收清单)）。
 
 ---
 
@@ -205,8 +210,8 @@ prometheus:
   query_url: http://localhost:9090         # 读
 
 agent:
-  interval_seconds: 60                     # 决策循环周期
-  validation_enabled: true                 # false = 跳过第二次 LLM 复核
+  interval_seconds: 10                     # 决策循环周期（与 config.yml 一致）
+  validation_enabled: true                 # config.yml 的默认值；false = 跳过第二次 LLM 复核
 
 model:                                     # 共享默认值
   api_key: ${LLM_API_KEY}              # 只写环境变量名占位符
@@ -250,7 +255,8 @@ policies:
 | `PUSHGATEWAY_URL` / `PROMETHEUS_URL` / `PROMETHEUS_TIMEOUT_SECONDS` | `prometheus.*` | :9091 / :9090 / 10 |
 | `COLLECTOR_INTERVAL_SECONDS` | `collectors.interval_seconds` | 10 |
 | `LLM_API_KEY` 等 | `model.api_key` 的 `${...}` 占位符 | 无（未设置启动报错） |
-| `WEB_HOST` / `WEB_PORT` | Web 监听地址 | 代码默认 127.0.0.1 / 8000；`bin/start.sh` 启动时默认改为 0.0.0.0（局域网可访问） |
+| `WEB_HOST` / `WEB_PORT` | Web 监听地址 | 代码与 `bin/start.sh` 均默认 127.0.0.1 / 8000；仅在有意识的局域网暴露时才设 `WEB_HOST=0.0.0.0`——并配合 TLS 反向代理，见第 7 节的安全提示 |
+| `SINAPIS_API_KEY` / `SINAPIS_AUTH_DISABLED` | 所有 HTTP 接口的 API Key（`Authorization: Bearer`）/ 显式无 Key 逃生开关 | 未设置 → backend 拒绝启动；见 [API Key 鉴权](#api-key-鉴权) |
 | `WEB_CACHE_TTL_SECONDS` / `WEB_CORS_ORIGINS` | Web 缓存与跨域 | 5 / localhost |
 | `WEB_CACHED_FILES_SCAN_PATH` / `WEB_CACHED_FILES_TTL_SECONDS` | 已缓存文件表的 Alluxio 扫描目录 / 扫描结果缓存时长 | /models / 30 秒 |
 | `SINAPIS_USER_METRICS_CONFIG` | Web 控制台外接指标/事件定义的独立配置文件 | 默认同 `SINAPIS_CONFIG` 指向的文件 |
@@ -259,6 +265,29 @@ policies:
 ---
 
 ## 7. 启动
+
+> **⚠ 安全提示——所有 HTTP 接口都需要 API Key。** 后端除只读指标 API 外，还挂载了可写的
+> 推送接口（`POST /api/user-system/metrics` 与 `POST /api/user-system/events`），全部接口
+> 都要求 `Authorization: Bearer $SINAPIS_API_KEY`。Key 生成一次后长期使用，绝不提交 git；
+> 同时注意 Key 在纯 HTTP 下是明文传输的：请保持 `WEB_HOST` 为 `127.0.0.1`（代码与启动脚本
+> 的默认值），不要把端口直接暴露到公网；确需局域网访问时，先在前面加一层 TLS 反向代理。
+
+### API Key 鉴权
+
+后端的每一个 HTTP 接口（GET、POST 一视同仁，包括 `/api/docs` 和 `/api/openapi.json`）
+都要求请求头 `Authorization: Bearer <key>`。
+
+- **生成一次**：`openssl rand -hex 32`。Key 是长期固定的共享密钥——外部用户系统可以推送
+  数年不变；只有泄露才需要轮换（过渡期服务端可同时接受新旧两把 Key，做到无停机轮换）。
+- **在部署环境中持久化**：shell 配置、systemd `EnvironmentFile=`、docker `env_file`/
+  Secret 等。重启前后必须**完全相同**——后端绝不自行生成或轮换 Key，也绝不从 git 跟踪
+  的文件读取（`.gitignore` 已覆盖 `.env`）。
+- **失败即拒绝（fail-closed）**：未设置 `SINAPIS_API_KEY` 时 backend 拒绝启动并给出明确
+  报错（`bin/start.sh backend` 会在启动前就提示原因）。只有显式设置
+  `SINAPIS_AUTH_DISABLED=true` 才能无 Key 运行，该开关与设置 Key 互斥。
+- **谁需要带 Key**：外部推送方（curl / 推送模拟器 / 你的业务系统）发送
+  `Authorization: Bearer` 请求头；Web 控制台在浏览器中输入一次 Key（存
+  `localStorage`）即可。
 
 ### 方式一：一键脚本（推荐）
 
@@ -277,11 +306,12 @@ bin/restart.sh               # 重启全部
 说明：
 
 - PID 写入 `run/<服务名>.pid`，日志写入 `logs/<服务名>.log`，重复执行 start 会跳过已运行的服务；
-- agent 启动前会检查 `LLM_API_KEY`，未设置会明确报错退出；
+- agent 启动时若 `config.yml` 里的 `${...}` 占位符（如 `LLM_API_KEY`）对应的环境变量
+  未设置，会启动即失败并明确报错；
 - backend 默认监听 `127.0.0.1:8000`，可用 `WEB_PORT=9000 bin/start.sh backend` 覆盖；
   frontend 默认 `127.0.0.1:5173`，可用 `FRONTEND_PORT` 覆盖；
 - **接口数据始终来自真实集群采集**（无演示模式）；某区块采集失败时该区块返回 `error` 与原因，不影响其它区块；
-- frontend：仅当 `web/node_modules` 存在时 `bin/start.sh frontend` 才会启动 vite dev server，否则跳过（退出码 0）——已构建 `web/dist` 时由 backend 直接托管页面；两者都没有时页面返回 503 及构建提示，直到执行 `cd web && npm install && npm run build`。
+- frontend：仅当 `web/node_modules` 存在时 `bin/start.sh frontend` 才会启动 vite dev server，否则跳过（退出码 0）——已构建 `web/dist` 时由 backend 直接托管页面；两者都没有时页面返回 503 及构建提示，直到执行 `cd web && npm ci && npm run build`。
 
 ### agent 阶段日志（logs/agent.log）
 
@@ -371,7 +401,23 @@ Agent 侧看日志：正常一轮按顺序出现这些英文日志关键字
 
 ---
 
-## 10. 常见问题
+## 10. 开发验收清单
+
+改动完成后，在仓库根目录依次执行以下检查再视为完成——CI（`.github/workflows/ci.yml`）
+跑的正是同一组检查：
+
+```bash
+# Python：lint + 完整测试
+python -m ruff check .
+python -m pytest tests -q
+
+# Web 控制台：按锁文件可复现安装 + 构建
+cd web && npm ci && npm run build && cd ..
+```
+
+---
+
+## 11. 常见问题
 
 **Q1：启动报 `k8s.namespace has moved to target.namespace`？**
 旧配置键残留。按报错提示把值挪到新段并删除旧键，重启即可。
@@ -390,7 +436,7 @@ kubernetes 34.x 客户端会把 `https_proxy` 读进连接配置并清掉 `no_pr
 （`*.local` 等）被代理劫持。取消代理环境变量，或确保代码里的直连旁路（bypass）生效后重试。
 
 **Q5：Web 页面 503 `frontend build not found`？**
-前端产物 `web/dist` 未构建：`cd web && npm install && npm run build`。仅用 API 可忽略。
+前端产物 `web/dist` 未构建：`cd web && npm ci && npm run build`。仅用 API 可忽略。
 
 **Q6：`uv sync` 报 lock 文件错误？**
 工作区 `uv.lock` 若损坏（如条目缺 source 字段），先 `git checkout uv.lock` 恢复，或直接

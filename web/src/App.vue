@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { fetchCachedFiles, fetchOverview } from './api'
+import { AuthError, fetchCachedFiles, fetchOverview, readStoredApiKey, storeApiKey } from './api'
 import CachedFilesPanel from './components/CachedFilesPanel.vue'
 import SectionPanel from './components/SectionPanel.vue'
 import { LANGUAGES, lang, setLang, t } from './i18n'
@@ -19,6 +19,21 @@ const cachedFiles = ref(null)
 const loading = ref(false)
 const interval = ref(readStoredInterval())
 const firstLoad = computed(() => !data.value && loading.value)
+
+// API-key gate: the backend requires "Authorization: Bearer" on every endpoint.
+// The key is entered once here and kept in this browser's localStorage; a 401
+// (missing or wrong key) reopens the gate.
+const needsKey = ref(false)
+const keyRejected = ref(false)
+const keyInput = ref('')
+
+function submitApiKey() {
+  storeApiKey(keyInput.value.trim())
+  keyInput.value = ''
+  keyRejected.value = false
+  needsKey.value = false
+  load()
+}
 
 function readStoredInterval() {
   // localStorage can be unavailable (private mode, blocked storage); refresh still works
@@ -51,7 +66,15 @@ async function load() {
     error.value = ''
   } catch (err) {
     if (err.name === 'AbortError') return
-    error.value = err.message || t('requestFailed')
+    if (err instanceof AuthError) {
+      // 401: the stored key is absent or was rejected — reopen the key gate
+      // instead of showing a generic backend error.
+      keyRejected.value = Boolean(readStoredApiKey())
+      needsKey.value = true
+      error.value = ''
+    } else {
+      error.value = err.message || t('requestFailed')
+    }
   } finally {
     loading.value = false
   }
@@ -170,6 +193,25 @@ onUnmounted(() => {
     </header>
 
     <main class="app-main">
+      <div v-if="needsKey" class="auth-gate" role="dialog" aria-label="API key">
+        <div class="auth-card">
+          <h2>{{ t('apiKeyTitle') }}</h2>
+          <p>{{ t('apiKeyPrompt') }}</p>
+          <p v-if="keyRejected" class="auth-wrong">{{ t('apiKeyWrong') }}</p>
+          <form @submit.prevent="submitApiKey">
+            <input
+              v-model="keyInput"
+              type="password"
+              autocomplete="off"
+              :placeholder="t('apiKeyPlaceholder')"
+              :aria-label="t('apiKeyTitle')"
+            />
+            <button type="submit" class="refresh-button">{{ t('apiKeySave') }}</button>
+          </form>
+        </div>
+      </div>
+
+      <template v-else>
       <div v-if="error" class="banner banner-error" role="alert">
         <strong>{{ t('metricsUnavailable') }}</strong>
         <span>{{ error }}</span>
@@ -215,6 +257,7 @@ onUnmounted(() => {
         <p>{{ t('noData') }}</p>
         <button type="button" class="refresh-button" @click="load">{{ t('reload') }}</button>
       </div>
+      </template>
     </main>
 
     <footer class="app-footer">

@@ -17,10 +17,17 @@
 ## 1. 获取代码并安装依赖
 
 ```bash
-git clone https://github.com/<org>/fluid-sinapis-agent.git
-cd fluid-sinapis-agent
+git clone https://github.com/fluid-cloudnative/fluid-sinapis.git
+cd fluid-sinapis
 uv venv --python 3.12
 uv pip install -r server/requirements.txt -p .venv/bin/python
+```
+
+可选（只有需要 Web 控制台页面时才要做）：构建一次前端产物。API 不依赖它；
+没有 `web/dist` 时页面会返回 503：
+
+```bash
+cd web && npm ci && npm run build && cd ..
 ```
 
 ## 2. 最小配置
@@ -35,11 +42,16 @@ target:
   runtime_name: nju-model-hdfs             # 留空 = 跟随 dataset
 ```
 
-导出模型密钥：
+导出模型密钥和 API Key：
 
 ```bash
 export LLM_API_KEY=<你的密钥>
+export SINAPIS_API_KEY=$(openssl rand -hex 32)   # 生成一次，然后持久化（见下）
 ```
+
+> API Key 保护所有 HTTP 接口（请求头 `Authorization: Bearer`）。生成一次后写入部署环境
+>（shell 配置、systemd `EnvironmentFile` 等）持久化——重启必须保持不变，且绝不能提交到
+> git。推送方和 Web 控制台使用同一个 Key；详见[用户指南](user-guide.md#api-key-鉴权)。
 
 ## 3. 启动
 
@@ -50,8 +62,14 @@ bin/start.sh          # 启动全部：collector → backend → frontend → ag
 ```
 
 - PID 写入 `run/`，日志写入 `logs/`；`bin/stop.sh` 停止、`bin/restart.sh` 重启；
-- backend 默认监听 `127.0.0.1:8000`，接口数据**始终来自真实集群采集**；
-- agent 启动前会检查 `LLM_API_KEY`，未设置会明确报错；
+- backend 未设置 `SINAPIS_API_KEY` 会拒绝启动，所有接口都要求
+  `Authorization: Bearer <key>`（确需无 Key 的本机调试可用 `SINAPIS_AUTH_DISABLED=true`
+  显式关闭）；
+- backend 默认监听 `127.0.0.1:8000`，接口数据**始终来自真实集群采集**。保持默认监听
+  地址，除非有意识暴露：Key 在纯 HTTP 下明文传输，暴露到局域网/公网需要 TLS 反向代理
+  （`WEB_HOST=0.0.0.0` 会监听所有网卡）；
+- agent 启动时若 `config.yml` 里的 `${...}` 占位符（如 `LLM_API_KEY`）对应的环境变量
+  未设置，会启动即失败并明确报错；
 - 首次建议先单轮验证再放开循环：
   ```bash
   .venv/bin/python -m server.agent.run_agents --once     # 手动单轮

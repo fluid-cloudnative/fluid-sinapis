@@ -35,13 +35,24 @@ class Decision(Contract):
 class Target(Contract):
     """Identify the host-selected Fluid resources independently of the decision."""
 
-    kube_context: str
-    namespace: str
-    dataset: str
-    runtime_name: str
+    kube_context: str = Field(min_length=1)
+    namespace: str = Field(min_length=1)
+    dataset: str = Field(min_length=1)
+    # An empty runtime_name falls back to the dataset (see the validator below);
+    # set it only when the Runtime and the Dataset have different names.
+    runtime_name: str = ""
     # Kubernetes API resource name, e.g. alluxioruntimes or jindoruntimes.
     # Keep this explicit: CRD plural names cannot reliably be inferred from kind.
     runtime_plural: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9]*$")
+
+    @model_validator(mode="after")
+    def resolve_runtime_name(self) -> "Target":
+        """Apply the empty-runtime_name-follows-dataset convention here, so every
+        reader of a validated Target sees a fully resolved value and the fallback
+        cannot be forgotten by one of them."""
+        if not self.runtime_name:
+            self.runtime_name = self.dataset
+        return self
 
 
 class Metric(Contract):

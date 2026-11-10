@@ -27,10 +27,6 @@ RunStatus = Literal["ok", "partial", "error", "timeout", "unknown"]
 
 _REPORTED_STATUSES = {"ok", "partial", "error", "timeout", "unknown"}
 
-# The subprocess timeout must outlast the script's own wait budget: if it does not, the
-# child is killed mid-poll and a merely slow operation is reported as "unknown".
-_WAIT_GRACE_SECONDS = 60.0
-
 
 @dataclass(frozen=True)
 class SkillRun:
@@ -59,7 +55,9 @@ class SkillRunner:
         skills_root: str | Path,
         *,
         python: str | None = None,
-        timeout_seconds: float = 300.0,
+        # The default pair mirrors server/config.yml: the script timeout must outlast
+        # the wait budget so a polling script is never killed mid-poll.
+        timeout_seconds: float = 660.0,
         wait: bool = True,
         wait_timeout_seconds: float = 600.0,
         dry_run: bool = False,
@@ -73,19 +71,17 @@ class SkillRunner:
             raise ValueError("timeout_seconds must be positive")
         self._wait = wait
         self._wait_timeout = wait_timeout_seconds
-        # A script that polls for completion must be allowed to finish polling; otherwise
-        # the outer timeout fires first and the outcome degenerates to "unknown".
-        self._timeout = (
-            max(timeout_seconds, wait_timeout_seconds + _WAIT_GRACE_SECONDS)
-            if wait else timeout_seconds
-        )
-        if self._timeout > timeout_seconds:
-            logger.warning(
-                "Raised the script timeout from %gs to %gs so it can outlast the %gs wait "
-                "budget; set execution.timeout_seconds above execution.wait_timeout_seconds "
-                "to avoid this adjustment",
-                timeout_seconds, self._timeout, wait_timeout_seconds,
+        # The config layer (ExecutionConfig) rejects an inconsistent timeout pair at
+        # startup; here a programmatic inconsistency fails loudly too, instead of
+        # being silently rewritten.
+        if wait and timeout_seconds <= wait_timeout_seconds:
+            raise ValueError(
+                "timeout_seconds must stay above wait_timeout_seconds so a script "
+                f"polling for completion is not killed mid-poll "
+                f"(got timeout_seconds={timeout_seconds:g}, "
+                f"wait_timeout_seconds={wait_timeout_seconds:g})"
             )
+        self._timeout = timeout_seconds
         self._dry_run = dry_run
         self._extra_env = dict(extra_env or {})
 
@@ -152,11 +148,21 @@ class SkillRunner:
                 ),
                 command=tuple(command),
             )
+        reported = payload.get("status")
+        status = _status(payload, completed.returncode)
+        error = payload.get("error") if reported not in (None, "ok") else None
+        if completed.returncode != 0 and reported in (None, "ok", "partial"):
+            # Keep the conflicting payload visible: the process failure wins, but the
+            # reported status is worth recording for debugging.
+            error = (
+                f"script exited with {completed.returncode} but reported "
+                f"status={reported!r}; treating the outcome as {status}"
+            )
         return SkillRun(
-            status=_status(payload, completed.returncode),
+            status=status,
             exit_code=completed.returncode,
             payload=payload,
-            error=payload.get("error") if payload.get("status") not in (None, "ok") else None,
+            error=error,
             command=tuple(command),
         )
 
@@ -176,10 +182,20 @@ class SkillRunner:
 
 
 def _status(payload: dict[str, Any], exit_code: int) -> RunStatus:
+    """Classify the outcome; a nonzero exit code always wins over a reported status.
+
+    A script that reports ok but exits nonzero may have died after printing its
+    payload and before finishing its work, so its "ok" cannot be trusted: treat the
+    outcome as unknown (a definite error/timeout report is still kept as-is).
+    """
     reported = payload.get("status")
+    if exit_code != 0:
+        if isinstance(reported, str) and reported in ("error", "timeout", "unknown"):
+            return reported  # type: ignore[return-value]
+        return "unknown"
     if isinstance(reported, str) and reported in _REPORTED_STATUSES:
         return reported  # type: ignore[return-value]
-    return "ok" if exit_code == 0 else "error"
+    return "ok"
 
 
 def _last_json_object(stdout: str) -> dict[str, Any] | None:

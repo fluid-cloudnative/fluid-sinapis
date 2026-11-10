@@ -7,8 +7,13 @@ RUN_DIR="$REPO_ROOT/run"
 LOG_DIR="$REPO_ROOT/logs"
 WEB_PORT="${WEB_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
-# 0.0.0.0 exposes the console on all interfaces (LAN access); override back to
-# 127.0.0.1 when that is not wanted.
+# Listen on all interfaces by default: the typical deployment runs the services
+# on one machine and fronts them with a reverse proxy on another, which needs a
+# non-loopback bind. The HTTP API is protected by a shared API key (SINAPIS_API_KEY,
+# checked by the backend itself), but the key is sent in the clear over plain HTTP
+# and the ports are now reachable from any network the host is attached to — put a
+# TLS-terminating reverse proxy in front for anything beyond a trusted LAN, or set
+# WEB_HOST to a specific address (e.g. the private IP) to narrow the exposure.
 WEB_HOST="${WEB_HOST:-0.0.0.0}"
 export WEB_PORT FRONTEND_PORT WEB_HOST
 
@@ -60,14 +65,24 @@ start_service() {
     fi
 
     # Pre-start checks
+    # Note: case matches the FIRST matching pattern, so service-specific checks
+    # must come before any branch that also lists that service.
     case "$name" in
-        collector|backend|agent)
+        backend)
             if [ ! -x "$PYTHONBIN" ]; then
                 echo "✗ $name was not started: $PYTHONBIN not found (install the dependencies first, see docs/en/user-guide.md)" >&2
                 return 1
             fi
-            if [ "$name" = "agent" ] && [ -z "${LLM_API_KEY:-}" ]; then
-                echo "✗ agent was not started: export LLM_API_KEY=<model key> first (the \${LLM_API_KEY} placeholder in config.yml needs it)" >&2
+            # The backend refuses to start without a key anyway; fail here with the
+            # actionable hint up front so the cause is visible before the log tail.
+            if [ -z "${SINAPIS_API_KEY:-}" ] && [ -z "${SINAPIS_AUTH_DISABLED:-}" ]; then
+                echo "✗ backend was not started: export SINAPIS_API_KEY=<key from \`openssl rand -hex 32\`> first (persisted in your environment, not in git; see docs/en/user-guide.md section on the API key)" >&2
+                return 1
+            fi
+            ;;
+        collector|agent)
+            if [ ! -x "$PYTHONBIN" ]; then
+                echo "✗ $name was not started: $PYTHONBIN not found (install the dependencies first, see docs/en/user-guide.md)" >&2
                 return 1
             fi
             ;;
@@ -79,7 +94,7 @@ start_service() {
                 if [ -f "$REPO_ROOT/web/dist/index.html" ]; then
                     echo "• frontend needs no separate process: the backend serves web/dist (http://$WEB_HOST:$WEB_PORT/)"
                 else
-                    echo "• frontend skipped: no web/node_modules and no web/dist build; the page will answer 503 until you run: cd web && npm install && npm run build"
+                    echo "• frontend skipped: no web/node_modules and no web/dist build; the page will answer 503 until you run: cd web && npm ci && npm run build"
                 fi
                 return 0
             fi
@@ -106,8 +121,41 @@ start_service() {
     local pid=$!
     popd >/dev/null
     echo "$pid" > "$(pid_file "$name")"
-    sleep 1
-    if is_running "$name"; then
+    # A bare `sleep 1` races interpreter startup: a Python service can spend >1s
+    # importing (fastapi/uvicorn) before a config error kills it, so the probe
+    # finds a live pid and reports "started" for a process that dies right after.
+    # Poll instead: fail fast the moment the process exits (within ~3s), and
+    # treat "still alive after the window" as started.
+    local _i _alive=1
+    for _i in $(seq 1 15); do
+        if ! is_running "$name"; then
+            _alive=0
+            break
+        fi
+        sleep 0.2
+    done
+    if [ "$_alive" = 1 ]; then
+        if [ "$name" = "frontend" ]; then
+            # Vite auto-increments its port when the requested one is taken, and
+            # a foreign process may even be squatting on the port — either way
+            # the healthy-looking process serves somewhere else. Verify that the
+            # process listening on the expected port is this checkout's server.
+            local _try _lpid=""
+            local _probe_host="$WEB_HOST"
+            [ "$_probe_host" = "0.0.0.0" ] && _probe_host=127.0.0.1
+            for _try in $(seq 1 10); do
+                _lpid="$(ss -tlnpH "sport = :$FRONTEND_PORT" 2>/dev/null | sed -n -E 's/.*pid=([0-9]+).*/\1/p' | head -n 1)"
+                [ -n "$_lpid" ] && break
+                sleep 0.5
+            done
+            if [ -z "$_lpid" ] || [ "$(readlink "/proc/$_lpid/cwd" 2>/dev/null)" != "$REPO_ROOT/web" ]; then
+                echo "✗ $name was not started: the process listening on $FRONTEND_PORT is not this checkout's dev server (port taken by a stray process — vite drifted to a different port), tail of the log:" >&2
+                tail -n 5 "$(log_file "$name")" >&2 2>/dev/null
+                _kill_tree TERM "$pid"
+                rm -f "$(pid_file "$name")"
+                return 1
+            fi
+        fi
         echo "✓ $name started (pid $pid), log: logs/$name.log"
         return 0
     fi
@@ -115,6 +163,18 @@ start_service() {
     tail -n 5 "$(log_file "$name")" >&2 2>/dev/null
     rm -f "$(pid_file "$name")"
     return 1
+}
+
+# Kill a process and every descendant (TERM first, escalate to KILL on request).
+# Killing only the wrapper pid leaks the real server: `npm run dev` spawns a
+# bash -> node chain, and an orphaned node keeps serving its port for as long
+# as the process lives — repeated start/stop cycles then pile up stray servers.
+_kill_tree() {
+    local sig="$1" root="$2" kid
+    for kid in $(pgrep -P "$root" 2>/dev/null); do
+        _kill_tree "$sig" "$kid"
+    done
+    kill "$sig" "$root" 2>/dev/null
 }
 
 stop_service() {
@@ -125,13 +185,13 @@ stop_service() {
         return 0
     fi
     pid="$(cat "$(pid_file "$name")")"
-    kill -TERM "$pid" 2>/dev/null
+    _kill_tree TERM "$pid"
     for i in $(seq 1 20); do
         kill -0 "$pid" 2>/dev/null || break
         sleep 0.5
     done
     if kill -0 "$pid" 2>/dev/null; then
-        kill -KILL "$pid" 2>/dev/null
+        _kill_tree KILL "$pid"
         echo "✓ $name was force-stopped (pid $pid)"
     else
         echo "✓ $name stopped (pid $pid)"

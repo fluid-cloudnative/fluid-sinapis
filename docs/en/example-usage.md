@@ -45,7 +45,23 @@ does not model a request rate. The `source` identity defaults to
   ```
 
   Upload the six files to HDFS and create a Fluid Dataset mounted at `/models/data`;
-  continue only once the Dataset is mounted.
+  continue only once the Dataset is mounted. Verify before starting:
+
+  ```bash
+  # Dataset and Runtime exist and are bound (adjust -n and names to your target section)
+  kubectl -n <namespace> get dataset <dataset>
+  kubectl -n <namespace> get alluxioruntime <runtime>
+  ```
+
+  If a later step misbehaves, these are the shortest checks:
+
+  ```bash
+  kubectl -n <namespace> get dataload            # DataLoads created by the agent (preload)
+  kubectl -n <namespace> get alluxioruntime <runtime> -o jsonpath='{.status.replicas}{"\n"}'
+                                                 # replica count after expand/shrink
+  kubectl -n <namespace> get pods -l fluid.io/dataset=<namespace>-<dataset>
+                                                 # worker pods Ready?
+  ```
 - Capacity assumption: **one worker, 5 GiB of cache**. 108+109 are 3.41 GiB (68 % used) and
   fit; adding 104+105 needs 8.80 GiB and does not.
 
@@ -67,6 +83,7 @@ before starting.
 | Option | Default | Description |
 |---|---|---|
 | `--url` | `http://127.0.0.1:8000` | Web console address |
+| `--api-key` | env `SINAPIS_API_KEY` | API key the backend requires on every endpoint |
 | `--source` | `hdfs-simulator` | Pusher identity (labels pushed metrics; informational for events) |
 | `--scenario` | — (required) | `preload` or `expand` |
 
@@ -77,7 +94,8 @@ are independent, so the expand pair arrives hotter than the preload pair.
 ## 5. Running
 
 ```bash
-# 1. Start the web console (if it is not already running)
+# 1. Start the web console (if it is not already running); it requires the API key:
+export SINAPIS_API_KEY=$(openssl rand -hex 32)   # generate once, persist in your env
 .venv/bin/python -m server.controller.web_controller
 
 # 2. Heat 108/109 and let the agent preload them
@@ -86,6 +104,9 @@ are independent, so the expand pair arrives hotter than the preload pair.
 # 3. Once 108/109 are cached, heat 104/105 on top of them
 .venv/bin/python examples/user_system_simulator.py --scenario expand
 ```
+
+The simulator reads `SINAPIS_API_KEY` from the environment (or `--api-key`) and sends
+`Authorization: Bearer <key>` on every request; without a key it exits with a hint.
 
 Example output (the script prints English):
 
@@ -125,13 +146,16 @@ With the pushes done:
 ## 7. FAQ
 
 **Q1: The simulator immediately fails with HTTPError 4xx?**
-Check `GET /api/user-system/metrics/schema`: the event/metric is not in the configured list
-(`unknown_event` / `unknown_metric`) or the `user_system` config failed to load (503). Fix
-config.yml, wait ~1 s for the hot reload, and retry.
+A 401 means the API key is missing or wrong (`SINAPIS_API_KEY` on both sides must
+match). Otherwise check `GET /api/user-system/metrics/schema` (with the same header):
+the event/metric is not in the configured list (`unknown_event` / `unknown_metric`) or
+the `user_system` config failed to load (503). Fix config.yml, wait ~1 s for the hot
+reload, and retry.
 
 **Q2: Pushes succeed but the agent does nothing?**
-The agent decides on a period (default 60 s) and needs observation windows to accumulate
-data; confirm the agent process is running and Prometheus can evaluate
+The agent decides on a period (default 10 s, `agent.interval_seconds` in
+`server/config.yml`) and needs observation windows to accumulate data; confirm the agent
+process is running and Prometheus can evaluate
 `rate(model_file_access_count[5m])`. Use `--once` to trigger a round immediately.
 
 **Q3: `preload` does not preload anything?**

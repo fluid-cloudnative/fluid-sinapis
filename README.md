@@ -24,13 +24,13 @@ Fluid already has complete elastic capabilities, but the "switches" of these cap
 
   Pluggable collector classes pull Fluid native metrics and the K8s Metrics API (pod/node resources), unified as Prometheus metrics for storage; a new collector is a class registered in `server/collectors/run_collectors.py`. External business traffic data needs no core change: it is declared in the `user_system` section of `config.yml` and pushed over HTTP
 
-- __External user-system data ingestion (passive push)__
+- __LLM agent system data ingestion (passive push)__
 
   Data that cannot be pulled actively is POSTed by the user system, validated server-side, and written into Prometheus. **The `user_system` section of `server/config.yml` hot-reloads without a restart** (detected by file mtime, effective within about 1 second); every other section requires a restart. detail: [custom-strategies-and-metrics](docs/en/custom-strategies-and-metrics.md):
 
 - __Agent Loop autonomous decision-making__
 
-  Reads time-series metrics periodically (e.g. every minute) → wraps a state snapshot → LLM reasoning produces a structured execution plan → second LLM validation → the deterministic executor invokes Fluid operation skills → structured execution results are recorded.
+  Reads time-series metrics periodically (per `agent.interval_seconds`, default 10 seconds) → wraps a state snapshot → LLM reasoning produces a structured execution plan → second LLM validation → the deterministic executor invokes Fluid operation skills → structured execution results are recorded.
 
 - __Fluid cache operation skills__
 
@@ -78,7 +78,7 @@ walkthrough see the [User Guide](docs/en/user-guide.md). (中文版：[docs/zh/q
 
 ## Join Us and Give Feedback
 
-Fluid-Sinapis-Agent brings true agent autonomy to Fluid, and open source is only the starting point. If you find bugs or want new features while using it, please open an issue or PR on [GitHub](https://github.com/<org>/fluid-sinapis-agent) and join the discussion.
+Fluid-Sinapis-Agent brings true agent autonomy to Fluid, and open source is only the starting point. If you find bugs or want new features while using it, please open an issue or PR on [GitHub](https://github.com/fluid-cloudnative/fluid-sinapis) and join the discussion.
 
 ## License
 

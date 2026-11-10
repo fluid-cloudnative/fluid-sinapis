@@ -81,15 +81,14 @@ def test_wait_and_dry_run_flags_are_host_controlled(skills_root, recorded, targe
     assert command[-1] == "--dry-run"
 
 
-def test_script_timeout_outlasts_the_wait_budget(skills_root, recorded, target):
-    """A polling script must not be killed while it is still polling."""
-    runner = SkillRunner(
-        skills_root, timeout_seconds=300.0, wait=True, wait_timeout_seconds=600.0
-    )
-
-    runner.run(CATALOG["expand_cache"], {"desired_replicas": 3}, target=target)
-
-    assert recorded["timeout"] == pytest.approx(660.0)
+def test_inconsistent_timeout_pair_is_refused_not_rewritten(skills_root, recorded):
+    """A script timeout that cannot outlast the wait budget must fail loudly here and
+    in the config layer, instead of being silently rewritten at run time."""
+    with pytest.raises(ValueError, match="must stay above wait_timeout_seconds"):
+        SkillRunner(
+            skills_root, timeout_seconds=300.0, wait=True, wait_timeout_seconds=600.0
+        )
+    assert recorded["command"] is None
 
 
 def test_timeout_is_left_alone_when_waiting_is_off(skills_root, recorded, target):
@@ -120,24 +119,42 @@ def test_missing_json_output_is_unknown_and_not_retried(skills_root, recorded, t
     assert "is unknown" in result.error
 
 
-def test_reported_status_beats_the_exit_code(skills_root, recorded, target):
+def test_nonzero_exit_code_wins_over_a_reported_ok(skills_root, recorded, target):
+    """A script that reports ok but exits nonzero may have died before finishing its
+    work, so its "ok" cannot be trusted: the outcome is unknown and the conflicting
+    payload is kept in the error for debugging."""
     recorded["result"] = subprocess.CompletedProcess(
-        [], 1, json.dumps({"status": "partial", "action": "evict_lru"}), ""
+        [], 1, json.dumps({"status": "ok", "action": "expand"}), ""
+    )
+    runner = SkillRunner(skills_root)
+
+    result = runner.run(CATALOG["expand_cache"], {"desired_replicas": 3}, target=target)
+
+    assert result.status == "unknown"
+    assert result.exit_code == 1
+    assert "conflict" in result.error or "reported" in result.error
+    assert result.payload["status"] == "ok"
+
+
+def test_reported_error_survives_a_nonzero_exit_code(skills_root, recorded, target):
+    recorded["result"] = subprocess.CompletedProcess(
+        [], 1, json.dumps({"status": "error", "error": "boom"}), ""
     )
     runner = SkillRunner(skills_root)
 
     result = runner.run(CATALOG["evict_cache"], {"count": 2, "path": "/models"}, target=target)
 
-    assert result.status == "partial"
+    assert result.status == "error"
     assert result.exit_code == 1
+    assert result.error == "boom"
 
 
-def test_timeout_reports_an_unknown_outcome(skills_root, monkeypatch, target):
+def test_timeout_reports_an_unknown_outcome(skills_root, recorded, monkeypatch, target):
     def raise_timeout(command, **kwargs):
         raise subprocess.TimeoutExpired(command, 5)
 
     monkeypatch.setattr(subprocess, "run", raise_timeout)
-    runner = SkillRunner(skills_root, timeout_seconds=5)
+    runner = SkillRunner(skills_root, timeout_seconds=5, wait_timeout_seconds=3)
 
     result = runner.run(CATALOG["expand_cache"], {"desired_replicas": 3}, target=target)
 

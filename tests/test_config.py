@@ -2,13 +2,16 @@
 
 import pytest
 
+from server.agent.schemas import Target
 from server.config import DEFAULT_TARGET, AppConfig, K8sSettings
 
 
 def test_missing_file_falls_back_to_defaults(tmp_path):
     cfg = AppConfig.load(path=tmp_path / "nope.yml", env={})
 
-    assert cfg.target == DEFAULT_TARGET
+    # DEFAULT_TARGET keeps runtime_name empty as the merge template; a fully built
+    # config resolves it against the dataset, so compare against the validated form.
+    assert cfg.target == Target(**DEFAULT_TARGET.model_dump())
     assert cfg.k8s == K8sSettings()
     assert cfg.prometheus.pushgateway_url == "http://localhost:9091"
     assert cfg.prometheus.query_url == "http://localhost:9090"
