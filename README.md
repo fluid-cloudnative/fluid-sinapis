@@ -2,7 +2,9 @@
 
 Fluid-Sinapis-Agent is an elastic Fluid cache management system built on an AI-agent framework, whose core goal is to upgrade Fluid cache management from traditional "manual/rule-based management" to an "autonomous perception – intelligent decision-making – automatic execution" system with Agentic characteristics, matching cache resources precisely and dynamically with the rhythm of the business.
 
-![alt text](./static/architecture_en.png)
+<div align="center">
+    <img src="static/architecture_en.png" title="architecture" height="60%" width="60%" alt="">
+</div>
 
 The system forms a complete autonomy loop: scheduled multi-source metric collection → LLM diagnosis → strategy selection and plan generation → LLM review → Fluid execution → result verification, while correlating real business traffic pressure with Fluid cache efficiency metrics to fit the differentiated needs of different business scenarios.
 
@@ -60,25 +62,26 @@ After downloading the project, prepare the following environment:
 
 ## Documentation
 
-| Document | English | 中文 |
-|---|---|---|
-| Quick start | [docs/en/quick-start.md](docs/en/quick-start.md) | [docs/zh/quick-start.md](docs/zh/quick-start.md) |
-| User guide (download / install / configure / start) | [docs/en/user-guide.md](docs/en/user-guide.md) | [docs/zh/user-guide.md](docs/zh/user-guide.md) |
-| Custom strategies & metrics | [docs/en/custom-strategies-and-metrics.md](docs/en/custom-strategies-and-metrics.md) | [docs/zh/custom-strategies-and-metrics.md](docs/zh/custom-strategies-and-metrics.md) |
-| Example (user-system simulator) | [docs/en/example-usage.md](docs/en/example-usage.md) | [docs/zh/example-usage.md](docs/zh/example-usage.md) |
-
-The Chinese README is [README-zh_CN.md](README-zh_CN.md).
+| Document | English | 
+|---|---|
+| Quick start | [docs/en/quick-start.md](docs/en/quick-start.md) | 
+| User guide (download / install / configure / start) | [docs/en/user-guide.md](docs/en/user-guide.md) | 
+| Custom strategies & metrics | [docs/en/custom-strategies-and-metrics.md](docs/en/custom-strategies-and-metrics.md) | 
+| Example (user-system simulator) | [docs/en/example-usage.md](docs/en/example-usage.md) | 
 
 ## Quick Start
 
 Follow the [Quick Start](docs/en/quick-start.md) (shortest path, five steps) to test
 Fluid-Sinapis-Agent on your Kubernetes cluster; for the full download/install/configure/start
-walkthrough see the [User Guide](docs/en/user-guide.md). (中文版：[docs/zh/quick-start.md](docs/zh/quick-start.md))
+walkthrough see the [User Guide](docs/en/user-guide.md). 
 
 
 ## Join Us and Give Feedback
 
 Fluid-Sinapis-Agent brings true agent autonomy to Fluid, and open source is only the starting point. If you find bugs or want new features while using it, please open an issue or PR on [GitHub](https://github.com/fluid-cloudnative/fluid-sinapis) and join the discussion.
+
+Slack:  
+- Join in the [CNCF](https://cncf-slack.netlify.app/) Slack and navigate to the #fluid channel for discussion.
 
 ## License
 

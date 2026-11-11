@@ -131,7 +131,8 @@ Notes:
 ## 5. Prepare the Infrastructure
 
 ### 5.1 Kubernetes + Fluid
-
+-   [Install Kubernetes](https://kubernetes.io/docs/setup/)  
+-   [Install Fluid](https://github.com/fluid-cloudnative/fluid/blob/master/docs/zh/userguide/install.md)  
 1. The kubeconfig must contain the context referenced by the config:
 
    ```bash
@@ -148,6 +149,7 @@ Notes:
    ```
 
 ### 5.2 Pushgateway and Prometheus
+-   [Install prometheus](https://prometheus.io/docs/prometheus/latest/getting_started)  
 
 Pushgateway (write channel, default :9091):
 
@@ -200,54 +202,45 @@ All configuration lives in `server/config.yml`; each process reads only its own 
 | `user_system` | web console (ingestion) / agent (observations) | Allowed external metrics/events — **the only hot-reloaded section** |
 
 ### 6.1 Key Settings
-
-```yaml
+#### Cluster Configuration (Required)
+Adjust the settings below according to the actual Kubernetes, Fluid, and Prometheus configuration on your server.
+```yml
 target:
-  kube_context: kubernetes-admin@cluster   # from kubectl config get-contexts
+  kube_context: kubernetes-admin@cluster   # Check with: kubectl config get-contexts
   namespace: jgd-fluid
   dataset: nju-model-hdfs                  # Dataset name
-  runtime_name: nju-model-hdfs             # empty = follow dataset
-  runtime_plural: alluxioruntimes          # plural of the Runtime CRD
+  runtime_name: nju-model-hdfs             # Leave empty to follow the dataset name
+  runtime_plural: alluxioruntimes          # Plural form of the Runtime CRD
 
 prometheus:
-  pushgateway_url: http://localhost:9091   # write
-  query_url: http://localhost:9090         # read
+  pushgateway_url: http://localhost:9091   # Write
+  query_url: http://localhost:9090         # Read
+```
 
-agent:
-  interval_seconds: 10                     # decision loop period (matches config.yml)
-  validation_enabled: true                 # default in config.yml; false = skip the second LLM review
-
-model:                                     # shared defaults
-  api_key: ${LLM_API_KEY}              # env-var placeholder only
+#### LLM Configuration (Required)
+Adjust the settings below according to your actual model provider configuration.
+```yml
+model:
+  api_key: ${LLM_API_KEY}                  # Environment variable name placeholder only; do not hardcode the key
   base_url: https://open.bigmodel.cn/api/paas/v4
   name: glm-5.3-flash
   temperature: 0
   timeout_seconds: 300
 
-models:                                    # per-role overrides (planner/validator only)
-  planner:  { name: glm-5.3-flash }
-  validator: { name: glm-5.3-flash }
-
-execution:
-  allowed_path_prefixes: [/models]         # UFS path prefixes allowed for preload/evict
-  timeout_seconds: 660                     # per-script timeout; timeout = unknown result, no retry. Must exceed wait_timeout_seconds
-  wait: true                                # wait for async operations to really finish (on by default)
-  wait_timeout_seconds: 600                 # how long one script may poll, covered by the timeout above
-  dry_run: false                            # dry-run: print manifests without touching the cluster
-
-policies:
-  expand:  { replica_increment: 1 }
-  preload: { max_files: 3, min_file_size_bytes: 1024 }
+models:                                    # Per-role overrides (planner / validator only)
+  planner:   { name: glm-5.3-flash }       # Model used for the first-pass inference
+  validator: { name: glm-5.3-flash }       # Model used for the second-pass review
 ```
 
+#### Runtime Configuration (Required)
+```yml
+execution:
+  allowed_path_prefixes: [/models]         # Allowed UFS path prefixes for preload/evict;
+                                           # also the cache path prefix for the Fluid runtime
+```
 Conventions and rules:
 
 - **Priority: environment variables > `config.yml` > code defaults**;
-- Write each semantic value in exactly one place (cluster info in `target`, Prometheus
-  addresses in `prometheus`) to avoid drift;
-- Old keys (`k8s.namespace`, `k8s.kube_context`, `fluid.*`, `metrics.prometheus_url`,
-  `prometheus.prometheus_query_url`) have been merged into the new sections; leftovers fail
-  **at startup** with a message pointing to the new location;
 - Except for the `user_system` section (hot-reloaded), processes must be restarted after a
   config change.
 
@@ -303,6 +296,8 @@ Every HTTP endpoint of the backend (GET and POST alike, including `/api/docs` an
   the browser and keeps it in `localStorage`.
 
 ### Option 1: one-shot scripts (recommended)
+
+Before start, build web first：cd web && npm install && npm run build    
 
 The repo ships `bin/start.sh` / `bin/stop.sh` / `bin/restart.sh` managing four services:
 **collector**, **backend** (HTTP API + web page + push endpoint), **frontend** (vite dev

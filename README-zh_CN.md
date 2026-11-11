@@ -3,8 +3,9 @@
 ## 什么是Fluid-Sinapis-Agent
 Fluid-Sinapis-Agent 是一套基于大模型智能体（AI Agent）框架构建的 Fluid 弹性缓存管理系统，其核心目标是将 Fluid 缓存管理从传统的“手工/规则式管理”升级为具备 Agentic（智能体自治）特征​ 的“自主感知‑智能决策‑自动执行”系统，实现缓存资源与业务节奏的动态精准匹配。
 
-![alt text](./static/architecture.png)
-
+<div align="center">
+    <img src="static/architecture.png" title="architecture" height="60%" width="60%" alt="">
+</div>
 本系统通过多源指标数据定时感知 → LLM 诊断 → 选策略出方案 → LLM 复核 → 调 Fluid 执行 → 回检记录 形成一套完整的自治闭环，同时将业务侧的真实流量压力与 Fluid 的缓存效能指标关联起来，适配不同业务场景的差异化需求。
 ## 项目解决什么问题
 
