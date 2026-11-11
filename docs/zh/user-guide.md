@@ -126,9 +126,10 @@ python3.12 -m venv .venv
 ## 5. 准备基础设施
 
 ### 5.1 Kubernetes + Fluid
+-   [Kubernetes安装教程](https://kubernetes.io/docs/setup/)  
+-   [Fluid安装教程](https://github.com/fluid-cloudnative/fluid/blob/master/docs/zh/userguide/install.md)  
 
-1. 本机 `kubeconfig` 中要存在配置指向的 context：
-
+1. 本机 `kubeconfig` 中要存在配置指向的 context：  
    ```bash
    kubectl config get-contexts        # 找到要用的 context 名
    kubectl get namespace              # 确认命名空间存在
@@ -143,6 +144,7 @@ python3.12 -m venv .venv
    ```
 
 ### 5.2 Pushgateway 与 Prometheus
+-   [prometheus安装教程](https://prometheus.io/docs/prometheus/latest/getting_started)  
 
 Pushgateway（写通道，默认 :9091）：
 
@@ -196,7 +198,8 @@ export LLM_API_KEY=<你的密钥>    # 与 config.yml 中 ${LLM_API_KEY} 占位�
 | `user_system` | Web 控制台（接收）/ Agent（观测） | 外接推送的指标/事件清单，**唯一支持热加载的段** |
 
 ### 6.1 关键配置项
-
+#### 集群配置信息（必须）
+以下配置根据自己服务器上实际的k8s、fluid以及Prometheus配置去修改。
 ```yaml
 target:
   kube_context: kubernetes-admin@cluster   # kubectl config get-contexts 查看
@@ -209,11 +212,15 @@ prometheus:
   pushgateway_url: http://localhost:9091   # 写
   query_url: http://localhost:9090         # 读
 
-agent:
-  interval_seconds: 10                     # 决策循环周期（与 config.yml 一致）
-  validation_enabled: true                 # config.yml 的默认值；false = 跳过第二次 LLM 复核
 
-model:                                     # 共享默认值
+```
+
+#### 大模型配置信息（必须）
+以下配置根据自己实际的大模型配置去修改。
+
+```yml
+
+model:                                    
   api_key: ${LLM_API_KEY}              # 只写环境变量名占位符
   base_url: https://open.bigmodel.cn/api/paas/v4
   name: glm-5.3-flash
@@ -221,27 +228,21 @@ model:                                     # 共享默认值
   timeout_seconds: 300
 
 models:                                    # 按角色覆盖（仅 planner/validator）
-  planner:  { name: glm-5.3-flash }
-  validator: { name: glm-5.3-flash }
+  planner:  { name: glm-5.3-flash }        # 第一次推理所用的大模型
+  validator: { name: glm-5.3-flash }       # 第二次复核所用的大模型
+```
+
+#### 系统运行配置信息（必须）
+```yml
 
 execution:
-  allowed_path_prefixes: [/models]         # preload/evict 允许的 UFS 路径前缀
-  timeout_seconds: 660                     # 单脚本超时；超时=结果未知，不重试。必须大于 wait_timeout_seconds
-  wait: true                               # 是否等异步操作真正完成（默认开启）
-  wait_timeout_seconds: 600                # 单个脚本轮询完成的最长时间，由上方的超时兜住
-  dry_run: false                           # 预演开关：true 只打印不落集群
+  allowed_path_prefixes: [/models]         # preload/evict 允许的 UFS 路径前缀，也是fluidruntime的缓存路径前缀
 
-policies:
-  expand:  { replica_increment: 1 }
-  preload: { max_files: 3, min_file_size_bytes: 1024 }
 ```
 
 约定与规则：
 
 - **优先级：环境变量 > `config.yml` > 代码默认值**；
-- 同一语义的值只写一处（集群信息在 `target`、Prometheus 地址在 `prometheus`），避免多处漂移；
-- 旧键（`k8s.namespace`、`k8s.kube_context`、`fluid.*`、`metrics.prometheus_url`、
-  `prometheus.prometheus_query_url`）已合并到新段，文件里残留会**启动即报错**并提示新位置；
 - 除 `user_system` 段外，改完配置需重启对应进程。
 
 ### 6.2 环境变量一览
@@ -290,6 +291,7 @@ policies:
   `localStorage`）即可。
 
 ### 方式一：一键脚本（推荐）
+启动前，先构建前端依赖：cd web && npm install && npm run build  
 
 仓库提供 `bin/start.sh` / `bin/stop.sh` / `bin/restart.sh`，管理四个服务：
 **collector**（采集器）、**backend**（HTTP 后端，自带 Web 页面与推送接口）、
