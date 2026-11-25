@@ -48,6 +48,8 @@ agent:
   # the review is the guard against model hallucination, and the docs advertise
   # dual-model validation as the default behavior.
   validation_enabled: true
+  # Offer historical troubleshooting cases to the planner.
+  on_demand_cases: false
 
 # -- Execution-stage limits --------------------------------------------------
 execution:

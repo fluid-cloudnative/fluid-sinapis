@@ -1,10 +1,7 @@
-"""Pre-assemble strategies and observations, then run two structured LLM requests.
+"""Plan from pre-assembled observations and independently review a fresh snapshot.
 
-Design: the planner and validator are each a **single** tool-less structured call --
-skill bodies and metric snapshots are assembled into the prompt by code, so the model
-only reasons and no longer drives a tool loop. The validator's independence is
-guaranteed by code: metrics are queried again between the two calls, giving it a second
-snapshot to cross-check against.
+The planner can read historical cases before submitting its structured decision.
+The validator receives the original observations and a second snapshot to cross-check.
 The executor is deterministic code: each approved step maps to its catalogue tool by a
 1:1 action lookup, with no model call in between.
 """
@@ -16,19 +13,23 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
+from hashlib import sha256
 from pathlib import Path
 from threading import Event
 from typing import Any
 
 from langchain.agents.structured_output import StructuredOutputValidationError
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import BaseTool
 from pydantic import Field
 
+from server.agent.cases import CaseStore
 from server.agent.execution import PlanExecutor
 from server.agent.execution.catalog import render_catalog
 from server.agent.execution.schemas import ExecutionReport
 from server.agent.prompts import (
+    CASE_REFERENCE_PROMPT,
     PLANNER_PROMPT,
     VALIDATOR_PROMPT,
     WORKFLOW_REQUEST,
@@ -42,7 +43,9 @@ logger = logging.getLogger(__name__)
 USER_SCRIPT_TIMEOUT_SECONDS = 60.0
 
 
-def _read_skill_documents(directory: Path | None) -> str:
+def _read_skill_documents(
+    directory: Path | None, *, fingerprints: dict[str, str] | None = None,
+) -> str:
     """Concatenate every SKILL.md under the directory, keyed by skill name.
 
     Directories starting with an underscore (such as `_template`) are templates or
@@ -54,7 +57,10 @@ def _read_skill_documents(directory: Path | None) -> str:
     for skill_md in sorted(directory.glob("*/SKILL.md")):
         if skill_md.parent.name.startswith("_"):
             continue
-        body = skill_md.read_text(encoding="utf-8")
+        payload = skill_md.read_bytes()
+        body = payload.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        if fingerprints is not None:
+            fingerprints[skill_md.parent.name] = sha256(payload).hexdigest()
         sections.append(f"### {skill_md.parent.name}\n\n{body}")
     return "\n\n".join(sections)
 
@@ -101,8 +107,37 @@ def _json_object_in_text(text: str) -> str | None:
     return candidate[start : end + 1]
 
 
-def _structured(model: BaseChatModel, schema, messages: list, stage: str, *, attempts: int = 2):
-    """Bind the schema as the only tool, then parse its tool call into the schema.
+def _case_replies(calls: list, tool: BaseTool, reads_left: int) -> list[ToolMessage]:
+    replies = []
+    for call in calls:
+        if call.get("name") != tool.name:
+            result = {"error": "Read the case replies, then submit the Decision tool by itself."}
+        elif reads_left <= 0:
+            result = {"error": "Case read limit reached."}
+        else:
+            reads_left -= 1
+            try:
+                arguments = call.get("args")
+                if not isinstance(arguments, dict):
+                    raise ValueError("expected tool arguments")
+                result = tool.invoke(arguments)
+            except ValueError:
+                result = {"error": "Provide one or two distinct case IDs."}
+        replies.append(ToolMessage(
+            name=call.get("name"), tool_call_id=call["id"],
+            content=json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+        ))
+    return replies
+
+
+def _structured(
+    model: BaseChatModel, schema, messages: list, stage: str, *, attempts: int = 2,
+    case_tool: BaseTool | None = None,
+):
+    """Parse the structured reply after serving any bounded planner case reads.
+
+    Case tool replies stay in the planner's thread. Case lookups have their own limit,
+    leaving the existing structured output retry available after the last lookup.
 
     Even at temperature 0 the model occasionally answers in prose instead of
     emitting the tool call (llm.log: every failed planner round has non-empty
@@ -113,12 +148,32 @@ def _structured(model: BaseChatModel, schema, messages: list, stage: str, *, att
     attributable from the stage log alone.
     """
     base = list(messages)
-    for attempt in range(1, attempts + 1):
-        message = model.bind_tools([schema]).invoke(
-            base if attempt == 1 else [*base, HumanMessage(content=_TOOL_CALL_REMINDER)]
-        )
+    bound = model.bind_tools([schema, case_tool] if case_tool is not None else [schema])
+    reads_left = 2 if case_tool is not None else 0
+    attempt = 1
+    while attempt <= attempts:
+        message = bound.invoke(base)
         calls = getattr(message, "tool_calls", None) or []
-        call = next((c for c in calls if c.get("name") == schema.__name__), None)
+        all_calls = calls + (getattr(message, "invalid_tool_calls", None) or [])
+        case_calls = [] if case_tool is None else [
+            call for call in all_calls if call.get("name") == case_tool.name
+        ]
+        if case_calls and reads_left:
+            ids = [call.get("id") for call in all_calls]
+            if all(ids) and len(set(ids)) == len(ids):
+                base.append(message)
+                base.extend(_case_replies(all_calls, case_tool, reads_left))
+            else:
+                base.append(HumanMessage(content="Use distinct tool call IDs for case reads."))
+            reads_left = max(0, reads_left - len(case_calls))
+            if not reads_left:
+                bound = model.bind_tools([schema])
+                base.append(HumanMessage(content="Return the final Decision alone now."))
+            continue
+        ambiguous_reply = case_tool is not None and len(all_calls) > 1
+        call = None if case_calls or ambiguous_reply else next(
+            (c for c in calls if c.get("name") == schema.__name__), None,
+        )
         if call is not None:
             try:
                 return schema.model_validate(call["args"])
@@ -129,7 +184,7 @@ def _structured(model: BaseChatModel, schema, messages: list, stage: str, *, att
                     ai_message=message,
                 ) from exc
         prose = _message_text(message).strip()
-        raw = _json_object_in_text(prose)
+        raw = None if case_calls or ambiguous_reply else _json_object_in_text(prose)
         if raw:
             try:
                 parsed = schema.model_validate_json(raw)
@@ -145,6 +200,8 @@ def _structured(model: BaseChatModel, schema, messages: list, stage: str, *, att
             "[%s] attempt %d/%d: no %s tool call, prose answer (%d chars): %.400s",
             stage, attempt, attempts, schema.__name__, len(prose), prose,
         )
+        attempt += 1
+        base.append(HumanMessage(content=_TOOL_CALL_REMINDER))
     return None
 
 
@@ -221,7 +278,7 @@ class WorkflowResult(Contract):
 
 
 class AgentWorkflow:
-    """One planning request plus one independent review request per round."""
+    """Plan from a snapshot with optional case reads, then independently review."""
 
     def __init__(
         self,
@@ -234,6 +291,7 @@ class AgentWorkflow:
         review_skills_dir: str | Path | None = None,
         user_skills_dir: str | Path | None = None,
         validation_enabled: bool = True,
+        on_demand_cases: bool = False,
     ) -> None:
         # With false the validator is skipped: the plan goes straight to execution
         # (no second model call).
@@ -247,19 +305,23 @@ class AgentWorkflow:
         )
         if review_directory is not None and not review_directory.is_dir():
             raise ValueError(f"review skill directory does not exist: {review_directory}")
-        # A missing user strategy directory is not an error: treat it as "no custom
-        # strategies right now".
-        user_directory = (
+        self._user_skills_dir = (
             Path(user_skills_dir).resolve() if user_skills_dir is not None else None
         )
-        if user_directory is not None and not user_directory.is_dir():
+        if self._user_skills_dir is not None and not self._user_skills_dir.is_dir():
             logger.warning(
-                "User strategy directory does not exist, ignoring it: %s", user_directory
+                "User strategy directory unavailable at startup: %s", self._user_skills_dir,
             )
-            user_directory = None
-        self._user_skills_dir = user_directory
 
-        planning_documents = _read_skill_documents(directory)
+        self._on_demand_cases = on_demand_cases
+        self._skills_dir = directory
+        fingerprints: dict[str, str] = {}
+        planning_documents = _read_skill_documents(
+            directory, fingerprints=fingerprints if on_demand_cases else None,
+        )
+        self._case_rule_digests = {
+            f"official/{name}": value for name, value in fingerprints.items()
+        }
         review_documents = _read_skill_documents(review_directory)
         self._planner_system = (
             PLANNER_PROMPT + f"\n\n# Strategy skills\n\n{planning_documents}"
@@ -277,13 +339,15 @@ class AgentWorkflow:
         self._validator = validator_model
         self._executor = executor
 
-    def _load_user_strategies(self) -> tuple[str, list[Path]]:
+    def _load_user_strategies(
+        self, *, fingerprints: dict[str, str] | None = None,
+    ) -> tuple[str, list[Path]]:
         """Rescan the user strategy directory every round: documents go into the
         context and verdict scripts are run separately, which makes them hot-reloadable."""
         directory = self._user_skills_dir
-        if directory is None:
+        if directory is None or not directory.is_dir():
             return "", []
-        documents = _read_skill_documents(directory)
+        documents = _read_skill_documents(directory, fingerprints=fingerprints)
         scripts = [
             path for path in sorted(directory.glob("*/scripts/*.py"))
             if not path.parent.parent.name.startswith("_")
@@ -350,7 +414,7 @@ class AgentWorkflow:
         return verdicts
 
     def run(self, request: str, context: Mapping[str, Any] | None = None) -> WorkflowResult:
-        """One planning request plus one independent review; only approved actions execute."""
+        """Plan and independently review a round before executing approved actions."""
         if not request.strip():
             raise ValueError("request must not be empty")
         context = dict(context or {})
@@ -359,7 +423,10 @@ class AgentWorkflow:
         observations = _collect_observations(self._tools)
         # User-defined strategies reload every round: documents are injected into the
         # context and script verdicts act as the highest-priority evidence.
-        user_documents, user_scripts = self._load_user_strategies()
+        user_fingerprints: dict[str, str] = {}
+        user_documents, user_scripts = self._load_user_strategies(
+            fingerprints=user_fingerprints if self._on_demand_cases else None,
+        )
         verdicts = self._run_user_strategy_scripts(user_scripts, observations, context)
         if verdicts:
             summary = "; ".join(
@@ -379,13 +446,27 @@ class AgentWorkflow:
             planner_payload["user_strategy_documents"] = user_documents
         if verdicts:
             planner_payload["custom_strategy_verdicts"] = verdicts
+        planner_system = self._planner_system
+        case_tool = None
+        if self._on_demand_cases:
+            rule_digests = self._case_rule_digests | {
+                f"user/{name}": value for name, value in user_fingerprints.items()
+            }
+            cases = CaseStore.load(self._skills_dir, self._user_skills_dir, rule_digests)
+            case_index = cases.index()
+            if case_index:
+                planner_payload["case_index"] = case_index
+                planner_system += "\n" + CASE_REFERENCE_PROMPT
+                case_tool = cases.tool()
         planner_messages = [
-            SystemMessage(content=self._planner_system),
+            SystemMessage(content=planner_system),
             HumanMessage(content=json.dumps(planner_payload, ensure_ascii=False, default=str)),
         ]
         logger.info("LLM planning")
         started = time.monotonic()
-        decision = _structured(self._planner, Decision, planner_messages, "planner")
+        decision = _structured(
+            self._planner, Decision, planner_messages, "planner", case_tool=case_tool,
+        )
         if decision is None:
             raise ValueError("planner did not return a structured Decision")
         logger.info(

@@ -61,6 +61,26 @@ def model_factory():
 
 
 @pytest.fixture
+def write_case():
+    def write(root, identifier, *, filename=None, **fields):
+        folder = root / "_cases"
+        folder.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "id": identifier,
+            "when": "The listing and cache totals disagree.",
+            "evidence": ["Two reads differed"],
+            "handling": "Checked the timestamp and scope of each read.",
+            "lesson": "Compare observations with matching scope.",
+            **fields,
+        }
+        path = folder / (filename or f"{identifier}.json")
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    return write
+
+
+@pytest.fixture
 def target():
     return Target(
         kube_context="test",

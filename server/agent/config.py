@@ -40,6 +40,7 @@ class AgentConfig(ConfigModel):
     # Enable the second, independent review model call; when false there is only one
     # reasoning pass and its result goes straight to execution.
     validation_enabled: bool = True
+    on_demand_cases: bool = False
 
 
 class PrometheusConfig(ConfigModel):

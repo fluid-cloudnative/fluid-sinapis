@@ -12,9 +12,11 @@ from server.agent.run_agents import build_workflow
 
 
 @pytest.mark.parametrize("partial", [False, True])
+@pytest.mark.parametrize("cases", [False, True])
 def test_configured_runtime_reads_prometheus_into_both_snapshots(
-    model_factory, target, prometheus_server, partial
+    model_factory, target, prometheus_server, partial, cases, tmp_path, write_case,
 ):
+    write_case(tmp_path, "user.case-test")
     missing = []
     if partial:
         row = prometheus_server.payloads["fluid"]["data"]["result"].pop()
@@ -22,11 +24,12 @@ def test_configured_runtime_reads_prometheus_into_both_snapshots(
     config = RuntimeConfig(
         planner_model={"name": "planner", "api_key": "planner-test"},
         validator_model={"name": "validator", "api_key": "validator-test"},
-        agent={"validation_enabled": True},
+        agent={"validation_enabled": True, "on_demand_cases": cases},
         target=target,
         skills_dir=Path(__file__).resolve().parents[3] / "server/agent/skills/official",
         review_skills_dir=Path(__file__).resolve().parents[3]
         / "server/agent/skills/review_skills",
+        user_skills_dir=tmp_path,
         operation_skills_dir=Path(__file__).resolve().parents[3]
         / "server/agent/skills/fluid_skills",
         prometheus={"query_url": prometheus_server.url},
@@ -52,6 +55,8 @@ def test_configured_runtime_reads_prometheus_into_both_snapshots(
 
     review_input = json.loads(reviewer.requests[0][-1].content)
     assert review_input["decision"]["status"] == "insufficient_data"
+    assert "case_index" not in review_input
+    assert ("case_index" in json.loads(planner.requests[0][-1].content)) is cases
 
     used = review_input["observations_used"]["read_fluid_metrics"]
     fresh = review_input["fresh_observations"]["read_fluid_metrics"]

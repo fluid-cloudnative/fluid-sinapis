@@ -70,6 +70,7 @@ def build_workflow(config: RuntimeConfig) -> AgentWorkflow:
         review_skills_dir=config.review_skills_dir or config.skills_dir,
         user_skills_dir=config.user_skills_dir,
         validation_enabled=config.agent.validation_enabled,
+        on_demand_cases=config.agent.on_demand_cases,
     )
 
 
